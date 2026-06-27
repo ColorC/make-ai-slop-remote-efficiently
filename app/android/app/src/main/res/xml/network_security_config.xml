@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LOFA 网络安全配置。
+  局域网 only + 用户手填任意 LAN IP(动态), 故无法用 <domain> 枚举主机, 只能在 base-config
+  放行明文(cleartextTrafficPermitted=true)。已知技术债: 范围偏宽(仅限本应用), 后续可上自签 TLS
+  或按"已连接主机"动态收窄(Android 对动态 host 的 NSC 支持有限)。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

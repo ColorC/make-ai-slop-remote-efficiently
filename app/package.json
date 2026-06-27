@@ -1,0 +1,21 @@
+{
+  "name": "lofa-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LOFA · Android shell (Capacitor) — 局域网远看 omnicompany",
+  "scripts": {
+    "cap": "cap",
+    "sync": "cap sync android",
+    "add:android": "cap add android",
+    "apk:debug": "cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/local-notifications": "^7.0.6"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0"
+  }
+}

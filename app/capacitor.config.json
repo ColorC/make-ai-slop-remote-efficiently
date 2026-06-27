@@ -1,0 +1,12 @@
+{
+  "appId": "cc.colorc.lofa",
+  "appName": "LOFA",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  }
+}

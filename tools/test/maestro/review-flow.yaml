@@ -1,0 +1,83 @@
+# Maestro 真机审阅主路径 — M4 验收脚本。
+# 跑前: 手机已装 LOFA 且能连上本机 omnicompany(同局域网, dashboard:8210 已开局域网绑定)。
+# 录像: maestro test --format junit review-flow.yaml 或 maestro studio 录屏留档(本任务审阅物料)。
+# 验收闭环: 手机审判/批注后, 电脑端审阅台(boss-sight)应能看到同一材料状态/评论变化
+#   —— 同一后端 /api/boss-sight/reviewstage, 肉眼/录像对照 PC 审阅台。
+#
+# 覆盖主路径(对齐 test_strategy):
+#   进审阅 tab → 列表 + _stats 角标 → 详情(6 类 material 各渲染) → 审判 → 批注 →
+#   看到 WS 事件回流(列表/详情刷新) → 多选批量审判
+appId: cc.colorc.lofa
+---
+- launchApp:
+    clearState: false
+
+# 已连接则顶栏圆点为 ok;若停在空态/设置, 先连接(地址在设置页已存)
+- runFlow:
+    when:
+      visible: "连接"
+    commands:
+      - tapOn: "连接"
+      - extendedWaitUntil:
+          visible: "审阅"
+          timeout: 10000
+
+# 1) 审阅 tab(默认): 列表 + _stats 角标(强制未过/新推送)
+- tapOn: "审阅"
+- assertVisible:
+    id: "list"
+- assertVisible: "强制未过"      # _stats 角标
+- assertVisible: "新推送"
+
+# 2) 打开第一张材料详情(审判动作就位)
+- tapOn:
+    id: "list"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: "detail"
+    timeout: 10000
+- assertVisible: "通过"          # 审判动作集
+- assertVisible: "驳回"
+- assertVisible: "阻断"
+- assertVisible: "评论"
+
+# 3) 写一条评论/批注(回到电脑端审阅台应可见 → 闭环)
+- tapOn: "评论"
+- extendedWaitUntil:
+    visible: "提交"
+    timeout: 5000
+- inputText: "LOFA 手机端批注：这里需要关注"
+- tapOn: "提交"
+# 评论提交后 WS 回流应把这条评论刷进详情评论区
+- extendedWaitUntil:
+    visible: "LOFA 手机端批注"
+    timeout: 10000
+
+# 4) 审判：通过(WS 回流后列表该项移出待审)
+- tapOn: "通过"
+- extendedWaitUntil:
+    visible:
+      id: "list"
+    timeout: 10000
+
+# 5) 多选 → 批量审判(二次确认)
+- tapOn: "多选"
+- tapOn:
+    id: "list"
+    index: 0
+- assertVisible: "已选"
+- tapOn: "通过"                  # 多选工具条的批量通过
+- extendedWaitUntil:
+    visible: "确定"             # 二次确认弹窗
+    timeout: 5000
+- tapOn: "确定"
+
+# 6) 归档筛选切换(含归档 ↔ 默认)
+- tapOn: "完成"                  # 退出多选
+- tapOn: "含归档"
+- tapOn: "含归档"
+
+# 验收闭环提示(肉眼/录像核对): 此刻在 PC 审阅台(boss-sight)
+#   (或 curl http://<本机>:8210/api/boss-sight/reviewstage/<id>)
+# 看到的材料状态/评论, 应与手机端一致 —— 证明同一后端、审判/批注/批量动作真生效。

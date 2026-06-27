@@ -1,0 +1,91 @@
+# Maestro 真机/模拟器对话主路径 — M1 验收脚本。
+# 跑前: 手机已装 LOFA 且能连上本机 omnicompany(同局域网)。
+# 录像: maestro test --format junit chat-flow.yaml  或用 maestro studio 录屏留档(本任务审阅物料)。
+#
+# 覆盖主路径(对齐 test_strategy):
+#   进会话 tab → 新建/进会话 → 发消息(运行指示+流式) → 工具卡(名/入参/结果) →
+#   中途停止 → 杀连重进历史不乱不重 → 切 effort → 发 /clear
+appId: cc.colorc.lofa
+---
+- launchApp:
+    clearState: false
+
+# 已连接则顶栏圆点为 ok;若停在空态/设置, 先连接(地址在设置页已存)
+- runFlow:
+    when:
+      visible: "连接"
+    commands:
+      - tapOn: "连接"
+      - extendedWaitUntil:
+          visible: "审阅"
+          timeout: 10000
+
+# 1) 切到「会话」tab
+- tapOn: "会话"
+- assertVisible: "+ Claude 会话"
+
+# 2) 新建一个 Claude 会话(弹窗确认默认工作目录)
+- tapOn: "+ Claude 会话"
+- assertVisible: "新会话工作目录"
+- tapOn: "确定"
+- extendedWaitUntil:
+    visible:
+      id: "composerInput"
+    timeout: 10000
+
+# 3) 发消息 → 运行指示 + 流式追加
+- tapOn:
+    id: "composerInput"
+- inputText: "用一句话说明你现在能做什么，并跑一下 ls 看看当前目录"
+- tapOn: "发送"
+- assertVisible: "运行中…"            # 运行指示出现
+- extendedWaitUntil:
+    notVisible: "运行中…"             # complete 收尾
+    timeout: 60000
+
+# 4) 工具卡出现(名/状态);若本轮触发了工具
+- runFlow:
+    when:
+      visible: "🔧"
+    commands:
+      - assertVisible: "完成"          # 工具卡状态收尾(或「出错」)
+
+# 5) 再发一条长任务 → 中途停止
+- tapOn:
+    id: "composerInput"
+- inputText: "请详细分阶段地写一篇 2000 字的长文"
+- tapOn: "发送"
+- assertVisible: "停止"
+- tapOn: "停止"
+- extendedWaitUntil:
+    visible: "已中断"
+    timeout: 20000
+
+# 6) 杀连重进(返回会话列表再进同一会话)→ 历史不乱不重
+- tapOn:
+    id: "btnBack"
+- assertVisible: "+ Claude 会话"
+- tapOn:
+    text: ".*"
+    index: 0                          # 进第一条(刚建的)会话
+- extendedWaitUntil:
+    visible:
+      id: "composerInput"
+    timeout: 10000
+- assertVisible: "用一句话说明你现在能做什么.*"   # 历史回放在, 且不应重复(肉眼核录像)
+
+# 7) 切 effort
+- tapOn:
+    id: "cvEffort"
+- assertVisible: "推理强度 effort"
+- tapOn: "high"
+- assertVisible:
+    id: "cvEffort"
+    text: "effort: high"
+
+# 8) 发 /clear(slash 原样发)
+- tapOn:
+    id: "composerInput"
+- inputText: "/clear"
+- tapOn: "发送"
+- assertVisible: "/clear"             # 用户气泡里就是原样的 /clear

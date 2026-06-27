@@ -1,0 +1,38 @@
+# --- Node / web ---
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# --- Android SDK (放 repo 文件夹内但不进 git, 太大) ---
+tools/android-sdk/
+
+# --- Capacitor / Android ---
+app/android/.gradle/
+app/android/build/
+app/android/app/build/
+app/android/local.properties
+app/android/.idea/
+app/android/captures/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# --- OTA bundles (产出物，不进 git) ---
+tools/build/out/
+*.bundle.zip
+
+# --- logs / runtime ---
+logs/
+*.log
+tools/log/captured/
+
+# --- env / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- OS ---
+.DS_Store
+Thumbs.db

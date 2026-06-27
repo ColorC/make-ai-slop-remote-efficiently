@@ -1,0 +1,88 @@
+# Maestro 真机笔记主路径 — M2 验收脚本。
+# 跑前: 手机已装 LOFA 且能连上本机 omnicompany(同局域网)。
+# 录像: maestro test --format junit notes-flow.yaml 或用 maestro studio 录屏留档(本任务审阅物料)。
+# 验收闭环: 手机写一条 authored 札记 → 在 PC 侧(看板)或同后端 /api/boss-sight/notes 读到它。
+#
+# 覆盖主路径(对齐 test_strategy):
+#   进笔记 tab → 浏览 KB(只读) → 搜索 → 打开 KB markdown 详情 →
+#   切「我的札记」→ 写一条 authored → 保存后列表可见 → 打开编辑保存 → 列表更新
+appId: cc.colorc.lofa
+---
+- launchApp:
+    clearState: false
+
+# 已连接则顶栏圆点为 ok;若停在空态/设置, 先连接(地址在设置页已存)
+- runFlow:
+    when:
+      visible: "连接"
+    commands:
+      - tapOn: "连接"
+      - extendedWaitUntil:
+          visible: "审阅"
+          timeout: 10000
+
+# 1) 切到「笔记」tab(默认 KB 只读来源)
+- tapOn: "笔记"
+- assertVisible:
+    id: "notesList"
+- assertVisible: "KB · 只读"          # KB 卡片标只读
+
+# 2) 搜索 KB
+- tapOn:
+    id: "notesQ"
+- inputText: "plan"
+- tapOn: "搜索"
+- extendedWaitUntil:
+    visible:
+      id: "notesList"
+    timeout: 10000
+
+# 3) 打开一篇 KB 详情(markdown 渲染, 明确只读, 无编辑按钮)
+- tapOn:
+    id: "notesQ"
+- eraseText
+- tapOn: "搜索"
+- tapOn:
+    id: "notesList"                   # 点列表里第一张卡片
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: "noteContent"
+    timeout: 10000
+- assertVisible: "KB · 只读"
+- assertNotVisible: "编辑"            # KB 不可写: 无编辑/归档动作
+
+# 4) 返回 → 切「我的札记」来源
+- tapOn:
+    id: "btnBack"
+- tapOn: "我的札记"
+- assertVisible: "札记 · 可写"
+
+# 5) 写一条 authored 札记(标记时间便于 PC 侧核对)
+- tapOn: "写札记"
+- assertVisible:
+    id: "noteEditArea"
+- tapOn:
+    id: "noteEditArea"
+- inputText: "LOFA 真机验收札记 maestro-m2"
+- tapOn: "保存"
+- extendedWaitUntil:
+    visible: "LOFA 真机验收札记 maestro-m2"   # 保存后回列表, 新条目可见
+    timeout: 10000
+
+# 6) 打开它 → 编辑 → 保存 → 列表更新
+- tapOn: "LOFA 真机验收札记 maestro-m2"
+- assertVisible: "编辑"
+- tapOn: "编辑"
+- tapOn:
+    id: "noteEditArea"
+- eraseText
+- inputText: "LOFA 真机验收札记 maestro-m2 已编辑"
+- tapOn: "保存"
+- extendedWaitUntil:
+    visible: "LOFA 真机验收札记 maestro-m2 已编辑"
+    timeout: 10000
+
+# 验收闭环提示(肉眼/录像核对): 此刻在 PC 看板笔记面板或
+#   curl http://<本机>:8210/api/boss-sight/notes?q=maestro-m2
+# 应能读到这条札记 —— 证明手机写 → 本机可见。

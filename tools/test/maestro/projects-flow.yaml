@@ -1,0 +1,79 @@
+# Maestro 真机项目主路径 — M3 验收脚本。
+# 跑前: 手机已装 LOFA 且能连上本机 omnicompany(同局域网, dashboard:8210 已开局域网绑定)。
+# 录像: maestro test --format junit projects-flow.yaml 或 maestro studio 录屏留档(本任务审阅物料)。
+# 验收闭环: 手机看到的项目/任务/计划状态徽标, 与电脑端项目工作板/任务窗口同一数据源
+#   (/api/projects · /api/quests · /api/plans)一致 —— 肉眼/录像对照 PC 看板。
+#
+# 覆盖主路径(对齐 test_strategy):
+#   进项目 tab → 加载项目列表 → 切任务卡(任务板) → 打开任务详情 →
+#   切计划板 → 筛选状态 → 打开计划摘要 → 状态徽标可见
+appId: cc.colorc.lofa
+---
+- launchApp:
+    clearState: false
+
+# 已连接则顶栏圆点为 ok;若停在空态/设置, 先连接(地址在设置页已存)
+- runFlow:
+    when:
+      visible: "连接"
+    commands:
+      - tapOn: "连接"
+      - extendedWaitUntil:
+          visible: "审阅"
+          timeout: 10000
+
+# 1) 切到「项目」tab(默认项目板)
+- tapOn: "项目"
+- assertVisible:
+    id: "projectsList"
+- assertVisible: "项目"          # 板页签
+- assertVisible: "任务"
+- assertVisible: "计划"
+
+# 2) 项目状态筛选(只读): 点「活跃」再回「全部」
+- tapOn: "活跃"
+- tapOn: "全部"
+
+# 3) 切到「任务」板 → 看到主线/支线状态徽标
+- tapOn: "任务"
+- extendedWaitUntil:
+    visible:
+      id: "projectsList"
+    timeout: 10000
+
+# 4) 打开第一张任务卡详情(长期目标/当前章节/子目标, 只读)
+- tapOn:
+    id: "projectsList"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: "projectDetail"
+    timeout: 10000
+- assertVisible: "进行中计划"     # 任务详情里的子目标区标题
+- assertNotVisible: "保存"        # 只读: 无任何写动作
+
+# 5) 返回 → 切到「计划」板, 按状态筛选「已归档」再回「全部」
+- tapOn:
+    id: "btnBack"
+- tapOn: "计划"
+- extendedWaitUntil:
+    visible:
+      id: "projectsList"
+    timeout: 10000
+- tapOn: "已归档"
+- tapOn: "全部"
+
+# 6) 打开一篇计划摘要详情(只读: 文档摘要, 无编辑)
+- tapOn:
+    id: "projectsList"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: "projectDetail"
+    timeout: 10000
+- assertVisible: "文档"           # 计划详情的文档区标题
+- assertNotVisible: "编辑"        # 只读
+
+# 验收闭环提示(肉眼/录像核对): 此刻在 PC 项目工作板 / 任务窗口
+#   (或 curl http://<本机>:8210/api/projects 、/api/quests 、/api/plans)
+# 看到的项目/任务/计划状态, 应与手机端徽标一致 —— 证明同一数据源、状态语义对齐。

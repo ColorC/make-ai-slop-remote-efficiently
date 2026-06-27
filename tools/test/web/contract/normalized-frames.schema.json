@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "lofa://cc-chat/normalized-frame",
+  "title": "ccdaemon 归一化帧(/api/cc/chat WS server→client)",
+  "description": "锁定前端只认的归一化帧形态。原始 SDK 帧(kind:assistant/system 带 message/subtype)不在此集合内。注: kind:result 是后端 _broadcast_turn_error 中断/错误收口时真发的帧({is_error,session_id,...}, 用 is_error 而非 SDK 的 result 字段), 属合法收口帧, 故收录; 带 result 字段无 is_error 的伪 SDK result 帧仍被拒。",
+  "type": "object",
+  "required": ["kind"],
+  "properties": { "kind": { "type": "string" } },
+  "oneOf": [
+    { "properties": { "kind": { "const": "stream_delta" }, "content": { "type": "string" } }, "required": ["kind", "content"] },
+    { "properties": { "kind": { "const": "stream_end" } }, "required": ["kind"] },
+    { "properties": { "kind": { "const": "text" }, "role": { "enum": ["user", "assistant"] }, "content": {} }, "required": ["kind", "content"] },
+    { "properties": { "kind": { "const": "thinking" }, "content": { "type": "string" } }, "required": ["kind", "content"] },
+    {
+      "properties": {
+        "kind": { "const": "tool_use" },
+        "toolId": { "type": "string" },
+        "toolName": { "type": "string" },
+        "input": {},
+        "toolInput": {}
+      },
+      "required": ["kind", "toolId", "toolName"]
+    },
+    {
+      "properties": {
+        "kind": { "const": "tool_result" },
+        "toolId": { "type": "string" },
+        "result": {},
+        "resultText": { "type": "string" },
+        "content": {},
+        "isError": { "type": "boolean" },
+        "exitCode": { "type": "number" }
+      },
+      "required": ["kind", "toolId"]
+    },
+    {
+      "properties": {
+        "kind": { "const": "status" },
+        "text": { "type": "string" },
+        "tokens": { "type": "number" },
+        "canInterrupt": { "type": "boolean" },
+        "tokenBudget": { "type": "object" }
+      },
+      "required": ["kind"]
+    },
+    {
+      "properties": { "kind": { "const": "complete" }, "sessionId": { "type": "string" }, "aborted": { "type": "boolean" } },
+      "required": ["kind"]
+    },
+    { "properties": { "kind": { "const": "error" }, "code": { "type": "string" }, "error": {}, "content": {}, "message": {} }, "required": ["kind"] },
+    { "properties": { "kind": { "const": "result" }, "is_error": { "type": "boolean" }, "session_id": { "type": "string" }, "duration_ms": { "type": "number" }, "num_turns": { "type": "number" }, "total_cost_usd": { "type": "number" } }, "required": ["kind", "is_error"] },
+    { "properties": { "kind": { "const": "session_created" }, "newSessionId": { "type": "string" } }, "required": ["kind", "newSessionId"] },
+    { "properties": { "kind": { "const": "context_event" }, "status": { "type": "string" }, "summary": { "type": "string" }, "planId": { "type": ["string", "null"] } }, "required": ["kind"] },
+    { "properties": { "kind": { "const": "permission_request" }, "requestId": { "type": "string" }, "toolName": { "type": "string" }, "input": {} }, "required": ["kind", "requestId"] },
+    {
+      "properties": {
+        "kind": { "const": "snapshot" },
+        "messages": { "type": "array" },
+        "history": { "type": "array", "items": { "type": "object", "required": ["role", "text"], "properties": { "role": { "type": "string" }, "text": { "type": "string" } } } },
+        "tokenUsage": { "type": "object" }
+      },
+      "required": ["kind"]
+    }
+  ]
+}
