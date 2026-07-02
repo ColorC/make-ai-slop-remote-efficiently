@@ -1,6 +1,8 @@
 # app · Capacitor Android 壳
 
-原生壳只做四件事：① 连接/权限　② OTA　③ 日志　④ 空态。功能 UI 全部复用 omnicompany 看板 React 前端的 build 产物（装进 WebView）。
+> 状态说明：里程碑一（自建移动端审阅视图真机跑通）早已完成，本文为该里程碑前的待搭清单底稿，部分描述已过时，权威现状见 `omnicompany/docs/projects/lofa/PROJECT_INDEX.md`。
+
+原生壳只做四件事：① 连接/权限　② OTA　③ 日志　④ 空态。功能 UI 是**自建移动端界面**，消费同一套后端接口（技术选型已否决复用桌面看板 React 前端的 build 产物，dockview 多面板塞竖屏适配差，详见 `omnicompany/docs/projects/lofa/PROJECT_INDEX.md`）。
 
 ## 待搭（里程碑一）
 - Capacitor 脚手架 + Android 工程。
