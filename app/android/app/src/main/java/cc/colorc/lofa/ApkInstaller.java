@@ -1,11 +1,11 @@
 package cc.colorc.lofa;
 
+import android.app.PendingIntent;
 import android.content.Intent;
+import android.content.pm.PackageInstaller;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
-
-import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -14,96 +14,164 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.security.MessageDigest;
+import java.util.Locale;
 
-/**
- * LOFA 自更新插件: app 自己从 PC 拉 APK 并触发系统安装器。
- * 飞连下手机→PC 通, 所以离开扁平网也能装 —— 不需要 adb / PC 主动连手机。
- */
+/** Downloads a verified self-update and submits it through PackageInstaller. */
 @CapacitorPlugin(name = "ApkInstaller")
-public class ApkInstaller extends Plugin {
+public final class ApkInstaller extends Plugin {
+    static final String INSTALL_PREFS = "lofa.install.status";
 
     @PluginMethod
     public void canInstall(PluginCall call) {
-        boolean ok = true;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ok = getContext().getPackageManager().canRequestPackageInstalls();
-        }
-        JSObject r = new JSObject();
-        r.put("granted", ok);
-        call.resolve(r);
+        boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.O
+                || getContext().getPackageManager().canRequestPackageInstalls();
+        JSObject result = new JSObject();
+        result.put("granted", granted);
+        call.resolve(result);
     }
 
     @PluginMethod
     public void openInstallPermission(PluginCall call) {
         try {
-            Intent i;
+            Intent intent;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:" + getContext().getPackageName()));
+                intent = new Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getContext().getPackageName())
+                );
             } else {
-                i = new Intent(Settings.ACTION_SECURITY_SETTINGS);
+                intent = new Intent(Settings.ACTION_SECURITY_SETTINGS);
             }
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(i);
-        } catch (Exception e) {
-            call.reject(e.getMessage());
-            return;
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception exception) {
+            call.reject(exception.getMessage());
         }
-        call.resolve();
+    }
+
+    @PluginMethod
+    public void installStatus(PluginCall call) {
+        android.content.SharedPreferences preferences = getContext().getSharedPreferences(INSTALL_PREFS, android.content.Context.MODE_PRIVATE);
+        JSObject result = new JSObject();
+        result.put("status", preferences.getInt("status", Integer.MIN_VALUE));
+        result.put("message", preferences.getString("message", ""));
+        result.put("session_id", preferences.getInt("session_id", -1));
+        result.put("updated_at", preferences.getLong("updated_at", 0));
+        call.resolve(result);
     }
 
     @PluginMethod
     public void downloadAndInstall(final PluginCall call) {
-        final String url = call.getString("url");
-        if (url == null || url.isEmpty()) { call.reject("missing url"); return; }
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    File apk = new File(getContext().getCacheDir(), "lofa-update.apk");
-                    if (apk.exists()) apk.delete();
-                    HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-                    c.setConnectTimeout(15000);
-                    c.setReadTimeout(120000);
-                    c.setInstanceFollowRedirects(true);
-                    c.connect();
-                    int code = c.getResponseCode();
-                    if (code / 100 != 2) { call.reject("http " + code); return; }
-                    InputStream in = c.getInputStream();
-                    FileOutputStream out = new FileOutputStream(apk);
-                    byte[] buf = new byte[65536];
-                    int n;
-                    long total = 0;
-                    while ((n = in.read(buf)) > 0) { out.write(buf, 0, n); total += n; }
-                    out.flush(); out.close(); in.close(); c.disconnect();
-                    if (total < 1000) { call.reject("apk too small: " + total); return; }
-                    final File fapk = apk;
-                    getActivity().runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            try {
-                                Uri uri = FileProvider.getUriForFile(getContext(),
-                                        getContext().getPackageName() + ".fileprovider", fapk);
-                                Intent i = new Intent(Intent.ACTION_VIEW);
-                                i.setDataAndType(uri, "application/vnd.android.package-archive");
-                                i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-                                getContext().startActivity(i);
-                                JSObject r = new JSObject();
-                                r.put("bytes", fapk.length());
-                                call.resolve(r);
-                            } catch (Exception e) {
-                                call.reject("install: " + e.getMessage());
-                            }
-                        }
-                    });
-                } catch (Exception e) {
-                    call.reject("download: " + e.getMessage());
+        final String url = call.getString("url", "");
+        final String expectedSha256 = call.getString("sha256", "").toLowerCase(Locale.ROOT);
+        if (url.isEmpty() || expectedSha256.length() != 64) {
+            call.reject("url and sha256 are required");
+            return;
+        }
+        new Thread(() -> {
+            try {
+                File apk = new File(getContext().getCacheDir(), "lofa-update.apk");
+                if (apk.exists() && !apk.delete()) throw new IllegalStateException("stale update cannot be replaced");
+                long bytes = download(url, apk);
+                if (bytes < 1000) throw new IllegalStateException("APK is too small: " + bytes);
+                String actualSha256 = sha256(apk);
+                if (!expectedSha256.equals(actualSha256)) {
+                    if (!apk.delete()) apk.deleteOnExit();
+                    throw new IllegalStateException("APK checksum mismatch");
                 }
+                int sessionId = submitInstall(apk);
+                JSObject result = new JSObject();
+                result.put("bytes", bytes);
+                result.put("sha256", actualSha256);
+                result.put("session_id", sessionId);
+                result.put("submitted", true);
+                call.resolve(result);
+            } catch (Exception exception) {
+                call.reject("update: " + exception.getMessage());
             }
-        }).start();
+        }, "lofa-apk-update").start();
+    }
+
+    private long download(String url, File destination) throws Exception {
+        HttpURLConnection connection = (HttpURLConnection) new URL(url).openConnection();
+        connection.setConnectTimeout(15000);
+        connection.setReadTimeout(120000);
+        connection.setInstanceFollowRedirects(true);
+        int code = connection.getResponseCode();
+        if (code < 200 || code >= 300) {
+            connection.disconnect();
+            throw new IllegalStateException("download HTTP " + code);
+        }
+        long total = 0;
+        try (InputStream input = connection.getInputStream(); FileOutputStream output = new FileOutputStream(destination)) {
+            byte[] buffer = new byte[65536];
+            int count;
+            while ((count = input.read(buffer)) > 0) {
+                output.write(buffer, 0, count);
+                total += count;
+            }
+            output.getFD().sync();
+        } finally {
+            connection.disconnect();
+        }
+        return total;
+    }
+
+    private int submitInstall(File apk) throws Exception {
+        PackageInstaller installer = getContext().getPackageManager().getPackageInstaller();
+        PackageInstaller.SessionParams parameters = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
+        parameters.setAppPackageName(getContext().getPackageName());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            parameters.setInstallReason(android.content.pm.PackageManager.INSTALL_REASON_USER);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            parameters.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
+        }
+        int sessionId = installer.createSession(parameters);
+        try (PackageInstaller.Session session = installer.openSession(sessionId)) {
+            // 写入流必须在 commit 之前关闭: PackageInstaller 不允许带着未关闭的 openWrite 流提交,
+            // 否则 commit 失败并报 "file still open"。故 input/output 收进内层 try, 写完即关, 再 commit。
+            try (FileInputStream input = new FileInputStream(apk);
+                 OutputStream output = session.openWrite("lofa-update.apk", 0, apk.length())) {
+                byte[] buffer = new byte[65536];
+                int count;
+                while ((count = input.read(buffer)) > 0) output.write(buffer, 0, count);
+                session.fsync(output);
+            }
+            Intent result = new Intent(getContext(), InstallResultReceiver.class);
+            result.setAction(InstallResultReceiver.ACTION_INSTALL_RESULT);
+            result.putExtra("session_id", sessionId);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
+            PendingIntent pending = PendingIntent.getBroadcast(getContext(), sessionId, result, flags);
+            session.commit(pending.getIntentSender());
+        }
+        getContext().getSharedPreferences(INSTALL_PREFS, android.content.Context.MODE_PRIVATE).edit()
+                .putInt("session_id", sessionId)
+                .putInt("status", PackageInstaller.STATUS_PENDING_USER_ACTION)
+                .putString("message", "submitted")
+                .putLong("updated_at", System.currentTimeMillis())
+                .apply();
+        return sessionId;
+    }
+
+    private static String sha256(File file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream input = new FileInputStream(file)) {
+            byte[] buffer = new byte[65536];
+            int count;
+            while ((count = input.read(buffer)) > 0) digest.update(buffer, 0, count);
+        }
+        StringBuilder value = new StringBuilder();
+        for (byte item : digest.digest()) value.append(String.format(Locale.ROOT, "%02x", item));
+        return value.toString();
     }
 }

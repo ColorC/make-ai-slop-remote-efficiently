@@ -1,0 +1,145 @@
+/* base.css — reset · 背景(液态玻璃承托层)· 排版 · 视图栈骨架 · safe-area。 */
+
+/* 终端字体(Windows Terminal 默认 Cascadia Mono,可变字重)。
+   font-display 必须 block:swap 会让 xterm 先用兜底字体量错格宽,字体到位后不重测。 */
+@font-face {
+  font-family: 'Cascadia Mono';
+  src: url('../fonts/CascadiaMono.woff2') format('woff2');
+  font-weight: 100 700;
+  font-display: block;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; height: 100%;
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 15px; line-height: 1.5;
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; padding: 0; }
+a { color: var(--accent); text-decoration: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* G.5 修④ 字体审计:浏览器默认 monospace 必须回落到带 CJK 的 mono 栈 */
+code, kbd, samp, pre { font-family: var(--mono); }
+
+/* ── ambient 承托层:蓝图 scene(V2 阶段四「蓝图精制」主题 G,2026-07-19)。
+   #091a3e 深图板 + 格纸纹理(细格 .05/26px + 主格 .08/130px)+ 单源径向光 .34——
+   静止无动画、无多色相、零图片,纹理只落在 scene 层(纹理分区铁律:文字面禁纹)。
+   第五波「材质裁决」:本层是全 app 唯一网格真源——fixed 全屏一张连续网格,
+   各 view/容器一律 transparent 透出本层,任何组件不得自画网格背景;
+   html.no-ambient 整层关闭(纯实底兜底)。 ── */
+#ambient {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: var(--bp-scene-grad), var(--bp-scene);
+}
+html.no-ambient #ambient { display: none; }
+@media (prefers-reduced-motion: reduce) { #ambient { animation: none; } }
+html.reduce-motion #ambient, html.no-glass #ambient { animation: none; }
+
+/* ── 蓝图刻度尺条(V2 阶段四第五波「材质裁决」,chrome 专用)。
+   唯一实现:40px 细 tick + 200px 长 tick + 尺寸数字(参数与 demo theme.css [data-theme="g"]
+   .bp-ticks-x 同源);由 js/ui.js bpRuler() 生成 DOM(aria-hidden)并挂到页头 chrome 容器,
+   各视图不得自画刻度。数字 11px 走 G.3⑥「chrome 区 aria-hidden 刻度可到 11px」豁免。 ── */
+.bp-ruler-top {
+  position: relative; flex: 0 0 auto; height: 16px; margin: 6px 0 0; overflow: hidden;
+  pointer-events: none; -webkit-user-select: none; user-select: none;
+  background:
+    repeating-linear-gradient(90deg, rgba(235,245,255,.4) 0 1px, transparent 1px 40px) left top/100% 5px no-repeat,
+    repeating-linear-gradient(90deg, rgba(235,245,255,.7) 0 1px, transparent 1px 200px) left top/100% 12px no-repeat;
+}
+.bp-ruler-top > i {
+  position: absolute; top: 4px; padding-left: 3px; font-style: normal;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; line-height: 1;
+  color: var(--fg-3); white-space: nowrap;
+}
+/* 手机 <600:数字密度减半(每 400 一个),tick 密度不动;平板/桌面全量 200 一档。 */
+@media (max-width: 599.98px) {
+  .bp-ruler-top > i:nth-child(even) { display: none; }
+}
+
+/* ── 壳与视图栈 ── */
+#app {
+  position: relative; z-index: 1;
+  height: 100%; display: flex; flex-direction: column; overflow: hidden;
+  background: transparent;
+}
+#viewport { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+
+/* 所有页面容器背景透明,让 ambient 透出来 */
+.view {
+  position: absolute; inset: 0; display: none; flex-direction: column;
+  min-height: 0; background: transparent;
+}
+.view.show { display: flex; }
+
+/* 推入/弹出转场:进右滑入,退反向更快;reduced-motion 瞬切。 */
+.view.anim-in { z-index: 2; background: var(--bg); animation: viewIn var(--t-push) var(--ease-out) both; }
+.view.anim-out { z-index: 2; background: var(--bg); animation: viewOut var(--t-pop) var(--ease-in) both; }
+@keyframes viewIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes viewOut { from { transform: translateX(0); } to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .view.anim-in, .view.anim-out { animation: none; }
+}
+html.reduce-motion .view.anim-in, html.reduce-motion .view.anim-out { animation: none; }
+
+/* 平板/桌面 ≥840:审阅/项目 主从双栏(router 加 body.split-active,判定走 matchMedia)。
+   不能降到 600:高分辨率 Android 手机竖屏的 CSS 宽度可能约 617px,会被误判为平板,
+   导致审阅正文只剩半屏。
+   显隐必须锚 .show——只放行 router 当前栈内的那对 master/detail;
+   不带 .show 时所有 split-master/split-detail 类视图会一并 display 堆进同一 grid
+   (2026-07-18「横屏双 master 堆叠」bug 根因:审阅+项目两对视图同显)。 */
+@media (min-width: 840px) {
+  body.split-active #viewport { display: grid; grid-template-columns: minmax(300px, 360px) 1fr; }
+  body.split-active .view.split-master.show,
+  body.split-active .view.split-detail.show { position: relative; inset: auto; display: flex; z-index: 1; }
+  body.split-active .view.split-detail.show { border-left: 1px solid var(--line); }
+}
+
+/* 通用滚动容器 */
+.scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+/* 正文缩放类(--font-scale 只作用于此) */
+.scale-text { font-size: calc(15px * var(--font-scale)); }
+
+/* ── ≥600 主内容限宽(measure):列表/页头/设置组 680 居中。
+   .wide-measure 为通用工具类,供新容器直接挂;下方结构选择器接线现有各 view 根滚动容器
+   (view js 不在本次改动面;split 左栏宽 <680 时规则自然不生效,无需排除)。
+   注:base.css 先于 components/views 加载,覆盖其规则需更高优先级(多类/含 id 选择器)。 ── */
+.wide-measure { max-width: 680px; margin-left: auto; margin-right: auto; width: 100%; }
+/* chat 消息列限宽 720 容器钩子:由 chatView.js 挂到 #chatMsgs 或其内层 wrap(窄屏下惰性)。 */
+.chat-measure { max-width: 720px; margin-left: auto; margin-right: auto; width: 100%; }
+@media (min-width: 600px) {
+  .view > .scroll > .lg-list,
+  .view > .scroll > .lg-head,
+  .view > .scroll > .rv-head,
+  .view > .scroll > .proj-board,
+  #meView > .lg-head,
+  #meList > .lg-group { max-width: 680px; margin-left: auto; margin-right: auto; }
+
+  /* FAB(56)+ 上下边距 → 列表底部留白,滚到底不被遮挡(覆盖 components .lg-list 尾 padding) */
+  .view .lg-list { padding-bottom: calc(96px + var(--safe-bottom)); }
+}
+
+/* ── 桌面 ≥1024:底部横排胶囊 → 左侧竖排导航 rail。
+   纯 @media 驱动(与 JS matchMedia 同族机制),旋转自洽;#app padding-left 给内容区让位。
+   波六裁决二:rail 本体透明化——去玻璃底/blur/影,改全高栏 + 1px 白线(α.2)右缘分隔,
+   #ambient 网格直接透出;每个 tab 用实底，避免四个独立 backdrop 层。
+   手机底部胶囊 nav 保持玻璃不动(浮起元素,非侧栏/页签)。 ── */
+@media (min-width: 1024px) {
+  #app { padding-left: 100px; }   /* rail 76 + 右隙 24(网格露出带) */
+  #app #bottomNav {
+    position: fixed; left: 0; top: 0; bottom: 0; transform: none;
+    width: 76px; margin: 0; padding: 10px 6px;
+    flex-direction: column; gap: 4px; justify-content: center;
+    background: transparent; border-radius: 0; box-shadow: none;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    border-right: 1px solid rgba(235,245,255,.2);
+  }
+  #app #bottomNav .lg-tab { flex: 0 0 auto; width: 100%; min-height: 52px;
+    border-radius: var(--r2);
+    background: var(--surface-2);
+    border: 1px solid rgba(235,245,255,.35);   /* 制图线框:底衬可读(dashboard rail 底衬同法) */
+  }
+}

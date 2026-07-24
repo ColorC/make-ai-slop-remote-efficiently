@@ -31,6 +31,7 @@
 
 ## 3. 对话 REST(都已核实存在,base `/api/cc/chat`)
 - 列会话 `GET /sessions`(items[]);建 `POST /sessions {provider,cwd,effort?,model?,active_plan?}`
+- provider 取值:claude_code / codex / omni_agent / kimi / opencode(后端按 provider 分发到对应 CLI)
 - 历史 `GET /sessions/{sid}/history` → `{messages[],total,hasMore,tokenUsage}`(重连重建用)
 - **effort** `PATCH /sessions/{sid}/metadata {effort:"low|medium|high|xhigh|max"|null}` → 回 `{effort, effort_applied?, effective:"next_user_turn"}`
 - **model** 同 metadata `{model}` 或 WS `session.model`

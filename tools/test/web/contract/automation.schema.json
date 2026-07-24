@@ -1,0 +1,397 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "lofa://automation",
+  "title": "LOFA 原生无障碍自动化信道契约 (/api/android/automation/*)",
+  "description": "锁定 B 档原生无障碍信道的命令包/命令参数/执行回执结构。真源: controlplane/android.py 的 /automation/* 端点 + AUTOMATION_OPS、DeviceBridgeService.java(桥+stage_media/cleanup_debug_media)、LofaAccessibilityService.java(系统级执行器)。字段以代码 optXxx 读取的真实名为准。",
+  "$defs": {
+    "op": {
+      "type": "string",
+      "enum": [
+        "status",
+        "screenshot",
+        "ui_tree",
+        "tap",
+        "click_text",
+        "set_text",
+        "global_action",
+        "launch_app",
+        "launch_label",
+        "stage_media",
+        "cleanup_debug_media"
+      ]
+    },
+
+    "command": {
+      "description": "automation_enqueue 生成、automation_poll 下发给手机的命令包。设备侧按 id/op/args/expires_at/sequence 消费。",
+      "type": "object",
+      "required": ["id", "sequence", "op", "args", "created_at", "expires_at"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer" },
+        "op": { "$ref": "#/$defs/op" },
+        "args": { "type": "object" },
+        "created_at": { "type": "number" },
+        "expires_at": { "type": "number" },
+        "idempotency_key": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending"] }
+      },
+      "additionalProperties": true
+    },
+
+    "pollResponse": {
+      "type": "object",
+      "required": ["ok", "device_id", "commands"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "device_id": { "type": "string" },
+        "commands": { "type": "array", "items": { "$ref": "#/$defs/command" } },
+        "last_seen": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+
+    "enqueueResponse": {
+      "description": "controller 入队命令后的返回。首次入队带 sequence/expires_at；重放 idempotency_key 命中时 deduplicated:true 且不含 sequence/expires_at。",
+      "type": "object",
+      "required": ["ok", "device_id", "command_id", "op", "deduplicated"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "device_id": { "type": "string" },
+        "command_id": { "type": "string" },
+        "sequence": { "type": "integer" },
+        "op": { "$ref": "#/$defs/op" },
+        "expires_at": { "type": "number" },
+        "deduplicated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+
+    "receiptPost": {
+      "description": "设备(DeviceBridgeService)回传给 POST /automation/result 的请求体。",
+      "type": "object",
+      "required": ["device_id", "command_id", "ok", "result"],
+      "properties": {
+        "device_id": { "type": "string", "minLength": 1 },
+        "command_id": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer" },
+        "ok": { "type": "boolean" },
+        "result": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+
+    "receiptStored": {
+      "description": "服务端落库 + GET /automation/result(wait) 回读的回执形态。",
+      "type": "object",
+      "required": ["command_id", "ok", "result", "ts"],
+      "properties": {
+        "command_id": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "result": { "type": ["object", "null"] },
+        "ts": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+
+    "pairingWindowResponse": {
+      "type": "object",
+      "required": ["ok", "device_id", "pairing_ip", "pairing_expires_at"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "device_id": { "type": "string" },
+        "pairing_ip": { "type": "string" },
+        "pairing_expires_at": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+
+    "pairResponse": {
+      "type": "object",
+      "required": ["ok", "device_id", "paired"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "device_id": { "type": "string" },
+        "paired": { "type": "boolean" },
+        "last_seen": { "type": "number" }
+      },
+      "additionalProperties": true
+    },
+
+    "errorResult": {
+      "description": "任一 op 失败时执行器返回 {error}(无障碍未连、坐标越界、目标未找到、系统 API 拒绝等)。",
+      "type": "object",
+      "required": ["error"],
+      "properties": { "error": { "type": "string" } },
+      "additionalProperties": false
+    },
+
+    "statusArgs": { "type": "object", "additionalProperties": false },
+    "screenshotArgs": { "type": "object", "additionalProperties": false },
+
+    "uiTreeArgs": {
+      "type": "object",
+      "properties": { "max_nodes": { "type": "integer", "minimum": 1, "maximum": 500 } },
+      "additionalProperties": false
+    },
+
+    "tapArgs": {
+      "description": "归一化坐标手势点击, nx/ny ∈ [0,1](执行器再乘屏幕像素宽高)。",
+      "type": "object",
+      "required": ["nx", "ny"],
+      "properties": {
+        "nx": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ny": { "type": "number", "minimum": 0, "maximum": 1 }
+      },
+      "additionalProperties": false
+    },
+
+    "clickTextArgs": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "exact": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+
+    "setTextArgs": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string" },
+        "view_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "globalActionArgs": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": { "type": "string", "enum": ["back", "home", "recents", "notifications"] }
+      },
+      "additionalProperties": false
+    },
+
+    "launchAppArgs": {
+      "type": "object",
+      "required": ["package"],
+      "properties": { "package": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+
+    "launchLabelArgs": {
+      "type": "object",
+      "required": ["label"],
+      "properties": { "label": { "type": "string", "minLength": 1 } },
+      "additionalProperties": false
+    },
+
+    "stageMediaArgs": {
+      "description": "把本机资产(先经 /automation/assets/lease 起租)落到手机相册。每个 asset 必带 sha256 供设备端逐字节校验。",
+      "type": "object",
+      "required": ["assets"],
+      "properties": {
+        "assets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["url", "sha256"],
+            "properties": {
+              "url": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string" },
+              "display_name": { "type": "string" },
+              "mime": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "cleanupDebugMediaArgs": {
+      "type": "object",
+      "required": ["display_names"],
+      "properties": {
+        "display_names": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "uiTreeNode": {
+      "type": "object",
+      "required": [
+        "depth", "class", "text", "description", "view_id",
+        "clickable", "editable", "enabled", "focused",
+        "checkable", "checked", "selected", "bounds"
+      ],
+      "properties": {
+        "depth": { "type": "integer" },
+        "class": { "type": "string" },
+        "text": { "type": "string" },
+        "description": { "type": "string" },
+        "view_id": { "type": "string" },
+        "clickable": { "type": "boolean" },
+        "editable": { "type": "boolean" },
+        "enabled": { "type": "boolean" },
+        "focused": { "type": "boolean" },
+        "checkable": { "type": "boolean" },
+        "checked": { "type": "boolean" },
+        "selected": { "type": "boolean" },
+        "bounds": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "uiTreeResult": {
+      "type": "object",
+      "required": ["package", "nodes", "timed_out", "truncated"],
+      "properties": {
+        "package": { "type": "string" },
+        "nodes": { "type": "array", "items": { "$ref": "#/$defs/uiTreeNode" } },
+        "timed_out": { "type": "boolean" },
+        "truncated": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+
+    "tapResult": {
+      "type": "object",
+      "required": ["dispatched", "x", "y"],
+      "properties": {
+        "dispatched": { "type": "boolean" },
+        "x": { "type": "integer" },
+        "y": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+
+    "clickTextResult": {
+      "type": "object",
+      "required": ["clicked", "text"],
+      "properties": {
+        "clicked": { "type": "boolean" },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "setTextResult": {
+      "type": "object",
+      "required": ["changed", "characters", "view_id"],
+      "properties": {
+        "changed": { "type": "boolean" },
+        "characters": { "type": "integer" },
+        "view_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "globalActionResult": {
+      "type": "object",
+      "required": ["performed", "action"],
+      "properties": {
+        "performed": { "type": "boolean" },
+        "action": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "launchAppResult": {
+      "type": "object",
+      "required": ["launched", "package"],
+      "properties": {
+        "launched": { "type": "boolean" },
+        "package": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "launchLabelResult": {
+      "description": "launch_label 成功时在 launch_app 结果上补 label + learned_package。",
+      "type": "object",
+      "required": ["launched", "package"],
+      "properties": {
+        "launched": { "type": "boolean" },
+        "package": { "type": "string" },
+        "label": { "type": "string" },
+        "learned_package": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "screenshotResult": {
+      "description": "Android 11+ takeScreenshot; 长边>1280 时缩放, JPEG 质量 75, base64 无换行。",
+      "type": "object",
+      "required": ["mime", "width", "height", "encoded_width", "encoded_height", "base64"],
+      "properties": {
+        "mime": { "type": "string", "enum": ["image/jpeg"] },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "encoded_width": { "type": "integer" },
+        "encoded_height": { "type": "integer" },
+        "base64": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "stageMediaResult": {
+      "type": "object",
+      "required": ["staged", "count"],
+      "properties": {
+        "staged": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["display_name", "uri", "sha256", "size"],
+            "properties": {
+              "display_name": { "type": "string" },
+              "uri": { "type": "string" },
+              "sha256": { "type": "string" },
+              "size": { "type": "integer" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "count": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+
+    "cleanupDebugMediaResult": {
+      "type": "object",
+      "required": ["requested", "deleted", "preserved_relative_path"],
+      "properties": {
+        "requested": { "type": "array", "items": { "type": "string" } },
+        "deleted": { "type": "integer" },
+        "preserved_relative_path": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "statusResult": {
+      "description": "status 合并无障碍执行器自证 + DeviceBridgeService.statusJson;字段多且随平台补充, 只锁关键位, 余下放行。",
+      "type": "object",
+      "required": ["accessibility_connected"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "service_connected": { "type": "boolean" },
+        "android_api": { "type": "integer" },
+        "bridge_running": { "type": "boolean" },
+        "bridge_paired": { "type": "boolean" },
+        "protocol_version": { "type": "integer" },
+        "accessibility_connected": { "type": "boolean" },
+        "capabilities": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    }
+  }
+}

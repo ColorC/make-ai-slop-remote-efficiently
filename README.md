@@ -1,8 +1,8 @@
-# LOFA · Look From Afar
+# LOFA · Look Over From Afar
 
 > 局域网内，从手机远看本机 omnicompany 的一切：审阅浏览、编辑笔记、和 AI 对话——全部在 App 内，支持应用内推送更新。连不到本机即无功能（不离线缓存）。
 >
-> 工作名 LOFA，可改。本 repo 同时是**安卓相关工具的家**（设备工具 adb/scrcpy、构建/测试/日志工具）。
+> `LOFA` 的发布门牌全句统一为 `Look Over From Afar`。本 repo 同时是**安卓相关工具的家**（设备工具 adb/scrcpy、构建/测试/日志工具）。
 
 ## 这是什么
 本机（omnicompany 所在 PC，当前 Android 16/HyperOS3 的小米手机）局域网移动客户端。本质是 omnicompany 看板那套后端（FastAPI 8210 / ccdaemon 8201 / chatui 网关 7348）的 Android 客户端。

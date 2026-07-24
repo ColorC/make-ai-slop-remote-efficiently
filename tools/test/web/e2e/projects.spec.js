@@ -1,166 +1,134 @@
-// Playwright 项目流程(M3) — 驱动真实 app/www 页面, REST 全 mock(只读)。
-// 覆盖 test_strategy: 进 Projects→加载项目列表→切换任务卡→筛选状态→打开计划摘要/任务详情→
-//   状态徽标与 fixture 一致。三个工作板同一数据源(/api/projects · /api/quests · /api/plans)。
+// projects.spec — 项目只读双视图(§7f + §11e + 追加修订):
+//   四段切换(应用/列表/任务/计划)、应用段真启动器(apps 宫格 + 项目宫格)、列表段分组+快速入口、
+//   app 内打开网页推入(#webView)、详情推入、只读护栏(全程只 GET)。
 import { test, expect } from '@playwright/test'
+import { baseRoutes, landSessions, json } from './helpers.js'
 
-const BASE = 'http://localhost:5599'
-
+const PROJECT_VIEWS = {
+  apps: [
+    { id: 'walker-demo', label: '行者 demo', icon: '🎮', url: '/walker-game/' },
+    { id: 'aigc', label: 'aigc 审阅', icon: '🎨', icon_url: '/api/project-assets/aigc.png', url: 'http://localhost:8077/' },
+  ],
+}
 const PROJECTS = {
   projects: [
-    { id: 'lofa', name: 'LOFA', group: 'omnicompany', pinned: true, plan_count: 2,
-      last_active: '2026-06-27T08:00:00+00:00', index_stale: false,
-      threads: [{ name: '壳', status: 'active', status_ok: true }], activity_7d: [false, true] },
-    { id: 'stale1', name: '陈旧项目', group: 'other', plan_count: 0,
-      last_active: '2026-01-01T00:00:00+00:00', index_stale: true, stale_reason: 'index 久未核对', threads: [] },
+    { id: 'p1', name: '项目甲', group: 'omnicompany', pinned: true, plan_count: 3,
+      last_active: '2026-07-16T10:00:00+00:00', desc: '甲项目一句话简介',
+      bg: 'linear-gradient(135deg,#172b3e,#2b847c)', links: [{ label: '看板', url: 'http://localhost:8210/' }] },
+    { id: 'p2', name: '项目乙', group: 'other', index_stale: true, stale_reason: 'index 久未核对',
+      desc: '乙项目简介', bg: '/api/project-assets/p2.png', links: [] },
   ],
-  groups_order: ['omnicompany', 'other'], group_labels: {},
+  groups_order: ['omnicompany', 'other'], group_labels: { omnicompany: 'Omnicompany', other: '其它' },
 }
-const QUESTS = {
-  quests: [
-    { id: 'lofa', title: 'LOFA', status: 'main', group: 'omnicompany', objective: '局域网远看 omnicompany',
-      chapter: '接入项目工作板', sub_objectives: [{ id: 'lofa/[2026-06-20]SHELL', title: '移动壳', date: '2026-06-20' }],
-      active_plan_count: 1, last_active: '2026-06-27T08:00:00+00:00' },
-  ],
-}
-const PLANS = {
-  items: [
-    { id: 'igame/[2026-06-01]X', topic: 'X', date: '2026-06-01', category: 'igame', archived: false, title_zh: '某计划' },
-    { id: '_archive/[2026-05-01]OLD', topic: 'OLD', date: '2026-05-01', category: '_archive', archived: true },
-  ], total: 2,
-}
-const LOFA_PLANS = {
-  project: 'lofa',
-  items: [{ id: 'lofa/[2026-06-20]SHELL', topic: 'SHELL', title_zh: '移动壳计划', date: '2026-06-20', category: 'lofa', archived: false }],
-  plan_ids: ['lofa/[2026-06-20]SHELL'],
-}
-// 真后端 get_plan(plans.py) 不返回 category(仅 id/topic/date/folder_path/files/archived/meta)。
-const PLAN_DETAIL = {
-  id: 'igame/[2026-06-01]X', topic: 'X', date: '2026-06-01',
-  folder_path: 'docs/plans/igame/[2026-06-01]X', archived: false,
-  files: [{ path: 'plan.md', is_md: true, summary: '这是计划摘要文本' }], meta: { status: 'active', work_type: 'planning' },
+const QUESTS = { quests: [{ id: 'q1', title: '任务一', status: 'main', objective: '长期目标', active_plan_count: 2 }] }
+const PLANS = { items: [{ id: 'proj/x/[2026-07-16]P', date: '2026-07-16', topic: '计划主题', category: '开发' }] }
+
+async function setup(page) {
+  const ctx = await baseRoutes(page)
+  const writes = []
+  page.on('request', (req) => {
+    const u = req.url()
+    if (/\/api\/(projects|quests|plans)/.test(u) && req.method() !== 'GET') writes.push(req.method() + ' ' + u)
+  })
+  await page.route(/\/api\/project-views/, (r) => json(r, PROJECT_VIEWS))
+  await page.route(/\/api\/projects(\?|$)/, (r) => json(r, PROJECTS))
+  await page.route(/\/api\/projects\/[^/]+\/plans/, (r) => json(r, { items: [] }))
+  await page.route(/\/api\/quests(\?|$)/, (r) => json(r, QUESTS))
+  await page.route(/\/api\/plans(\?|$)/, (r) => json(r, PLANS))
+  return { ctx, writes }
 }
 
-async function setupRoutes(page) {
-  await page.addInitScript((base) => { try { localStorage.setItem('lofa.baseUrl', base) } catch (e) {} }, BASE)
-  const json = (route, body, status = 200) =>
-    route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-
-  // 壳 / 连接 / 轮询
-  await page.route('**/api/healthz', (r) => json(r, { ok: true }))
-  await page.route('**/api/android/register', (r) => json(r, { ok: true }))
-  await page.route('**/api/android/log', (r) => json(r, { ok: true }))
-  await page.route('**/api/android/apk/version', (r) => json(r, { manifest: null }))
-  await page.route('**/api/boss-sight/reviewstage/_stats', (r) => json(r, { by_status: { pending: 0 }, pushed_unread: 0 }))
-  await page.route('**/api/boss-sight/residents', (r) => json(r, { residents: [] }))
-  await page.route('**/api/boss-sight/reviewstage?*', (r) => json(r, { items: [] }))
-
-  // ── 项目/任务/计划 只读端点 ──
-  // 注: Playwright 按注册的「逆序」匹配 → 更具体的端点必须后注册(才会先被命中)。
-  await page.route('**/api/quests**', (r) => json(r, QUESTS))
-  await page.route('**/api/projects**', (r) => json(r, PROJECTS))           // 通用(列表)
-  await page.route('**/api/projects/*/plans', (r) => json(r, LOFA_PLANS))   // 具体(项目关联计划)
-  await page.route('**/api/plans**', (r) => json(r, PLANS))                 // 通用(计划列表)
-  await page.route('**/api/plans/**', (r) => json(r, PLAN_DETAIL))          // 具体(计划详情, 带 id)
-}
-
-async function gotoProjects(page) {
-  await page.goto('/')
-  await expect(page.locator('#dot')).toHaveClass(/ok/, { timeout: 8000 })
-  await page.locator('#tabProjects').click()
+async function toProjects(page) {
+  await landSessions(page)
+  await page.locator('#bottomNav .lg-tab[data-tab="projects"]').click()
   await expect(page.locator('#projectsView')).toHaveClass(/show/)
+  await page.locator('#projectsList .proj-item').first().waitFor()
 }
 
-test.describe('LOFA 项目流程(M3)', () => {
-  test.beforeEach(async ({ page }) => { await setupRoutes(page) })
+test.describe('项目双视图', () => {
+  test('四段切换:应用 / 列表 / 任务 / 计划', async ({ page }) => {
+    await setup(page)
+    await toProjects(page)
+    // 默认列表段:分组头 + 项目行(展示图/名/简介)
+    await expect(page.locator('#projectsList .proj-group-head', { hasText: 'Omnicompany' })).toHaveCount(1)
+    await expect(page.locator('#projectsList .proj-item', { hasText: '项目甲' })).toHaveCount(1)
+    await expect(page.locator('#projectsList')).toContainText('甲项目一句话简介')
 
-  test('项目列表→切任务卡→筛选→打开计划/任务详情, 状态徽标与 fixture 一致', async ({ page }) => {
-    await gotoProjects(page)
+    // 应用段:启动器宫格(app + 项目图标)
+    await page.locator('#projectsBoardSeg button[data-v="apps"]').click()
+    await expect(page.locator('#projectsApps')).toBeVisible()
+    await expect(page.locator('#projectsApps .proj-app', { hasText: '行者 demo' })).toHaveCount(1)
+    await expect(page.locator('#projectsApps .proj-app', { hasText: '项目甲' })).toHaveCount(1)
 
-    // 1) 默认项目板: 两张项目卡, 置顶 LOFA + stale 项目带「待核对」
-    await expect(page.locator('#projectsList .card')).toHaveCount(2)
-    await expect(page.locator('#projectsList .card', { hasText: 'LOFA' })).toBeVisible()
-    await expect(page.locator('#projectsList')).toContainText('📌')
-    await expect(page.locator('#projectsList .b.pst-stale')).toContainText('待核对')
+    // 任务段
+    await page.locator('#projectsBoardSeg button[data-v="quests"]').click()
+    await expect(page.locator('#projectsList .lg-row', { hasText: '任务一' })).toHaveCount(1)
 
-    // 2) 项目状态筛选「待核对」→ 只剩 stale 项目
-    await page.locator('.chip.st[data-s="stale"]').click()
-    await expect(page.locator('#projectsList .card')).toHaveCount(1)
-    await expect(page.locator('#projectsList .card')).toContainText('陈旧项目')
-
-    // 3) 切到任务板: 主线徽标 + 长期目标
-    await page.locator('.chip[data-b="quests"]').click()
-    await expect(page.locator('#projectsList .b.pst-main')).toContainText('主线')
-    await expect(page.locator('#projectsList')).toContainText('局域网远看 omnicompany')
-
-    // 4) 打开任务详情: 长期目标/当前章节/子目标
-    await page.locator('#projectsList .card', { hasText: 'LOFA' }).click()
-    await expect(page.locator('#projectDetailView')).toHaveClass(/show/)
-    await expect(page.locator('#projectDetail')).toContainText('接入项目工作板')
-    await expect(page.locator('#projectDetail')).toContainText('移动壳')
-
-    // 5) 返回 → 切计划板: 项目筛选 chips + 状态筛选「已归档」
-    await page.locator('#btnBack').click()
-    await page.locator('.chip[data-b="plans"]').click()
-    await expect(page.locator('#projectsList .card')).toHaveCount(2)
-    await expect(page.locator('.chip.pj[data-p="lofa"]')).toBeVisible()
-    await page.locator('.chip.st[data-s="archived"]').click()
-    await expect(page.locator('#projectsList .card')).toHaveCount(1)
-    await expect(page.locator('#projectsList .b.pst-archived')).toContainText('已归档')
-
-    // 6) 回到全部, 打开计划摘要详情(只读)
-    await page.locator('.chip.st[data-s=""]').click()
-    await page.locator('#projectsList .card', { hasText: '某计划' }).click()
-    await expect(page.locator('#projectDetailView')).toHaveClass(/show/)
-    await expect(page.locator('#projectDetail')).toContainText('这是计划摘要文本')
+    // 计划段 + 筛选 sheet 项目单选
+    await page.locator('#projectsBoardSeg button[data-v="plans"]').click()
+    await expect(page.locator('#projectsList .lg-row', { hasText: '计划主题' })).toHaveCount(1)
+    await page.locator('#projectsFilterPill').click()
+    await expect(page.locator('#projectsFilterSheet .lg-sheet-radio[data-project=""]')).toContainText('全部项目')
   })
 
-  test('计划板选具体项目走 /projects/{id}/plans', async ({ page }) => {
-    await gotoProjects(page)
-    await page.locator('.chip[data-b="plans"]').click()
-    await expect(page.locator('.chip.pj[data-p="lofa"]')).toBeVisible()
-    const [req] = await Promise.all([
-      page.waitForRequest('**/api/projects/lofa/plans'),
-      page.locator('.chip.pj[data-p="lofa"]').click(),
-    ])
-    expect(req.url()).toContain('/api/projects/lofa/plans')
-    await expect(page.locator('#projectsList .card', { hasText: '移动壳计划' })).toBeVisible()
+  test('应用段:pinned 项目在前, app 置顶', async ({ page }) => {
+    await setup(page)
+    await toProjects(page)
+    await page.locator('#projectsBoardSeg button[data-v="apps"]').click()
+    await expect(page.locator('#projectsApps .proj-app')).toHaveCount(4)   // 2 app + 2 项目
+    const names = await page.locator('#projectsApps .proj-app .proj-app-name').allInnerTexts()
+    expect(names[0]).toContain('行者 demo')  // apps 在前
+    expect(names[2]).toContain('项目甲')      // 项目段 pinned 在前
+    // icon_url 的 app 渲染成图标(img);无 icon_url 回退 emoji
+    await expect(page.locator('#projectsApps .proj-app', { hasText: 'aigc 审阅' }).locator('.proj-app-icon')).toHaveClass(/img/)
+    await expect(page.locator('#projectsApps .proj-app', { hasText: '行者 demo' }).locator('.proj-app-icon')).toHaveClass(/emoji/)
   })
 
-  test('顶栏刷新带 ?fresh=1 穿透服务端 index 缓存', async ({ page }) => {
-    await gotoProjects(page)
-    await expect(page.locator('#projectsList .card')).toHaveCount(2)
-    // 点顶栏刷新 → 下一次 /api/projects 必须带 fresh=1(穿透 enrich_projects 的 _INDEX_CACHE)
-    const [req] = await Promise.all([
-      page.waitForRequest((r) => /\/api\/projects(\?|$)/.test(r.url()) && r.url().includes('fresh=1')),
-      page.locator('#btnRefresh').click(),
-    ])
-    expect(req.url()).toContain('fresh=1')
-    await expect(page.locator('#projectsList .card')).toHaveCount(2)
+  test('点击 app → app 内全屏网页(#webView 推入, 相对路径拼 base)', async ({ page }) => {
+    await setup(page)
+    await toProjects(page)
+    await page.locator('#projectsBoardSeg button[data-v="apps"]').click()
+    await page.locator('#projectsApps .proj-app', { hasText: '行者 demo' }).click()
+    await expect(page.locator('#webView')).toHaveClass(/show/)
+    await expect(page.locator('#webView iframe')).toHaveAttribute('data-url', 'https://localhost:5599/walker-game/')
   })
 
-  test('零写断言: 浏览全流程无任何非-GET 业务请求(真浏览器层统计)', async ({ page }) => {
-    const writes = []
-    page.on('request', (r) => {
-      const u = r.url(), m = r.method()
-      if (m === 'GET') return
-      // 日志回传 / 注册 / healthz 探活属壳基础设施, 不计入项目板的写
-      if (u.includes('/api/android/') || u.includes('/api/healthz')) return
-      writes.push(m + ' ' + u)
-    })
-    await gotoProjects(page)
-    await expect(page.locator('#projectsList .card')).toHaveCount(2)
-    // 切板 + 状态筛选 + 项目筛选 + 开详情 + 顶栏刷新, 覆盖全部交互
-    await page.locator('.chip[data-b="quests"]').click()
-    await expect(page.locator('#projectsList .b.pst-main')).toBeVisible()
-    await page.locator('#projectsList .card', { hasText: 'LOFA' }).click()
+  test('列表段快速入口:点项目 links 打开网页(localhost 主机替换)', async ({ page }) => {
+    await setup(page)
+    await toProjects(page)
+    await page.locator('#projectsList .proj-item', { hasText: '项目甲' }).locator('.proj-link', { hasText: '看板' }).click()
+    await expect(page.locator('#webView')).toHaveClass(/show/)
+    await expect(page.locator('#webView iframe')).toHaveAttribute('data-url', 'http://localhost:8210/')
+  })
+
+  test('列表段分组头可折叠', async ({ page }) => {
+    await setup(page)
+    await toProjects(page)
+    const head = page.locator('#projectsList .proj-group-head[data-group="omnicompany"]')
+    await expect(page.locator('#projectsList .proj-item', { hasText: '项目甲' })).toBeVisible()
+    await head.click()
+    await expect(head).toHaveClass(/collapsed/)
+    await expect(page.locator('#projectsList .proj-item', { hasText: '项目甲' })).toBeHidden()
+  })
+
+  test('详情推入:列表行主体 → 项目详情标题与关联计划区', async ({ page }) => {
+    await setup(page)
+    await toProjects(page)
+    await page.locator('#projectsList .proj-item', { hasText: '项目甲' }).locator('.proj-item-main').click()
     await expect(page.locator('#projectDetailView')).toHaveClass(/show/)
-    await page.locator('#btnBack').click()
-    await page.locator('.chip[data-b="plans"]').click()
-    await expect(page.locator('.chip.pj[data-p="lofa"]')).toBeVisible()
-    await page.locator('.chip.pj[data-p="lofa"]').click()
-    await expect(page.locator('#projectsList .card', { hasText: '移动壳计划' })).toBeVisible()
-    await page.locator('#btnRefresh').click()
-    await page.waitForTimeout(300)
+    await expect(page.locator('#projectDetailView .lg-nav-title')).toHaveText('项目甲')
+    await expect(page.locator('#projectDetail')).toContainText('关联计划')
+  })
+
+  test('只读护栏:全程无写请求', async ({ page }) => {
+    const { writes } = await setup(page)
+    await toProjects(page)
+    await page.locator('#projectsBoardSeg button[data-v="apps"]').click()
+    await page.locator('#projectsApps .proj-app').first().waitFor()
+    await page.locator('#projectsBoardSeg button[data-v="quests"]').click()
+    await page.locator('#projectsList .lg-row').first().waitFor()
+    await page.locator('#projectsBoardSeg button[data-v="plans"]').click()
+    await page.locator('#projectsList .lg-row').first().waitFor()
     expect(writes).toEqual([])
   })
 })

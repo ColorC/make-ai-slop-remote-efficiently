@@ -1,0 +1,61 @@
+/* sessions.css — 统一会话空间(#sessionsView)。列表为内容层实底;玻璃只在头/FAB。
+   V2 蓝图精制波二(2026-07-19):filterbar 列布局 / 副行默认收起(少字) / data-st 边界语言 /
+   ⓘ sheet kv / 批量模式(行首 check + dockbar) / 「更早」渐进披露。 */
+
+/* provider 染色:图标前景取对应 provider 色。chat=气泡,term=方框,颜色区分族。 */
+#sessionsView .lg-row-icon.pv-claude { color: var(--provider-claude); }
+#sessionsView .lg-row-icon.pv-codex { color: var(--provider-codex); }
+#sessionsView .lg-row-icon.pv-omni { color: var(--provider-omni); }
+#sessionsView .lg-row-icon.pv-term { color: var(--provider-term); }
+
+/* ══ 页头下 filterbar(蓝图工具行:搜索虚线件 + 状态 seg + 来源 picker + 选择) ══ */
+#sessionsView .lg-filterbar { flex-direction: column; align-items: stretch; gap: 8px; padding: 2px 18px 8px; }
+#sessionsView .lg-filterbar .lg-fb-search { flex: 0 0 auto; max-width: none; }
+#sessionsView .ss-tools { display: flex; align-items: center; gap: 10px; }
+#sessionsView .ss-tools .lg-tagpicker { flex: 0 0 auto; }
+#sessionsView .ss-select { margin-left: auto; padding: 8px 16px; font-size: 13px; }
+#sessionsView .ss-select.on { border-color: var(--line-strong); color: var(--fg); background: var(--bp-hatch), var(--surface); }
+
+/* ══ 列表行:副行默认隐藏(少字;目录/来源进 ⓘ sheet 与 hover 预览) ══ */
+#sessionsView .lg-row-sub { display: none; }
+/* 行左缘状态色条(demo .lr-bar 同源:待输入=ok,在跑=busy,可续接=强白线,已结束=弱线) */
+#sessionsView .ss-bar { flex: 0 0 auto; width: 3px; align-self: stretch; border-radius: 2px; background: var(--line-2); }
+#sessionsView .ss-bar[data-st="wait"] { background: var(--ok); }
+#sessionsView .ss-bar[data-st="run"] { background: var(--busy); }
+#sessionsView .ss-bar[data-st="recover"] { background: var(--line-strong); }
+/* 可续接 = dashed 未探索区(蓝图边界语言,不占文字底) */
+#sessionsView .lg-row[data-st="recover"] { border-style: dashed; }
+/* 批量选中 = hatch 剖面 + 强描边(结构标记,不在文字底上铺;基色随玻璃 hover 档) */
+#sessionsView .lg-row.picked { background: var(--bp-hatch), var(--bp-glass-fill-hover); border-color: var(--line-strong); }
+/* 行首 check(批量模式;点击由整行承载,本件只作态显) */
+#sessionsView .ss-cb { padding: 0; width: auto; flex: 0 0 auto; pointer-events: none; }
+#sessionsView .ss-cb:hover { background: transparent; }
+/* 组头计数 = 窄档尺寸标注(真实数据) */
+#sessionsView .ss-sec-n { margin-left: 8px; }
+
+/* ══ 「更早」渐进披露展开钮(虚线件,与搜索/picker 同族) ══ */
+#sessionsView .ss-more { display: flex; justify-content: center; padding: 2px 0 10px; }
+#sessionsView .ss-more button { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px;
+  border-radius: var(--r2); background: transparent; border: 1px dashed var(--line-strong);
+  color: var(--fg-2); font-size: 13px; font-family: var(--mono); }
+#sessionsView .ss-more button svg { width: 15px; height: 15px; }
+#sessionsView .ss-more button:active { color: var(--fg); border-style: solid; }
+
+/* ══ ⓘ 底部 sheet:主/次动作区(kv 键值行 = components.css .lg-kvrow) ══ */
+.ss-info-acts { display: flex; flex-direction: column; gap: 8px; padding: 12px 8px 6px; }
+
+/* ══ 批量 dockbar(已选计数 mono;删除 danger 右隔离) ══ */
+#sessionsActions .ss-sel-n { flex: 0 0 auto; font-size: 13px; color: var(--fg-2); white-space: nowrap; font-family: var(--mono); }
+#sessionsActions .lg-btn { flex: 0 0 auto; padding: 9px 14px; font-size: 13px; white-space: nowrap; }
+#sessionsActions .ss-del { margin-left: auto; }
+
+/* 新建 sheet:主按钮(挂在 sheet body 末尾;工作目录分区已删,cwd 固定) */
+.ss-new-go { padding: 12px 8px 6px; }
+
+/* ══ 平板 ≥600(--bp-phone):页头/filterbar/列表行限宽居中。
+   base.css 暂无 .wide-measure 工具类(并行改动冻结),先在本文件自写断点,待统一工具类落地后替换。 ══ */
+@media (min-width: 600px) {
+  #sessionsView .lg-head,
+  #sessionsView .lg-filterbar,
+  #sessionsView .lg-list { max-width: 720px; width: 100%; margin-left: auto; margin-right: auto; }
+}

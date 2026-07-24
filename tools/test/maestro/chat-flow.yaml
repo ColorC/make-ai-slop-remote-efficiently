@@ -74,18 +74,20 @@ appId: cc.colorc.lofa
     timeout: 10000
 - assertVisible: "用一句话说明你现在能做什么.*"   # 历史回放在, 且不应重复(肉眼核录像)
 
-# 7) 切 effort
+# 7) 切 effort(工具栏改为「会话设置」底部 sheet)
 - tapOn:
-    id: "cvEffort"
+    id: "cvSettings"
+- assertVisible: "推理强度"
+- tapOn: "推理强度"
 - assertVisible: "推理强度 effort"
 - tapOn: "high"
-- assertVisible:
-    id: "cvEffort"
-    text: "effort: high"
+- assertVisible: "下一轮生效"          # effort_applied=after_current_turn 文案
 
-# 8) 发 /clear(slash 原样发)
+# 8) 发 /clear(敲 / 弹补全浮层, 选中填入后原样发)
 - tapOn:
     id: "composerInput"
-- inputText: "/clear"
+- inputText: "/cl"
+- assertVisible: "/clear"             # 补全浮层里出现 /clear
+- tapOn: "/clear"                     # 选中 → 填入输入框(不自动发送)
 - tapOn: "发送"
 - assertVisible: "/clear"             # 用户气泡里就是原样的 /clear

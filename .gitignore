@@ -27,6 +27,10 @@ tools/build/out/
 logs/
 *.log
 tools/log/captured/
+app/data/
+__pycache__/
+*.py[cod]
+tools/test/web/_probe.mjs
 
 # --- env / secrets ---
 .env

@@ -1,0 +1,81 @@
+<!doctype html><html lang=zh><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>LOFA 设备视图</title><style>
+*{box-sizing:border-box} body{margin:0;background:#0a0d12;color:#e6edf3;font-family:system-ui,"Microsoft YaHei",sans-serif;height:100vh;display:flex;flex-direction:column}
+#bar{display:flex;gap:6px;align-items:center;padding:6px 10px;background:#161a22;border-bottom:1px solid #283042;flex-wrap:wrap}
+#bar b{font-size:13px} #bar .sub{color:#8b97a8;font-size:11px;margin-right:auto}
+#bar button{background:#1c2230;color:#e6edf3;border:1px solid #283042;border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer}
+#bar button.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
+#bar input{background:#0b0e13;border:1px solid #283042;border-radius:6px;color:#e6edf3;padding:5px 8px;font-size:12px;width:130px}
+.seg{display:flex;gap:0;border:1px solid #283042;border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:5px 10px}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;padding:8px;overflow:hidden;background:#000}
+#screen{max-height:100%;max-width:100%;border:1px solid #283042;border-radius:10px;cursor:crosshair;background:#000;display:block}
+#hint{position:fixed;bottom:6px;left:50%;transform:translateX(-50%);background:#000a;padding:3px 10px;border-radius:10px;font-size:11px;color:#8b97a8}
+</style></head><body>
+<div id=bar>
+  <b>LOFA 设备视图</b><span class=sub id=info>连接中…</span>
+  <span class=seg><button id=pPhone class=on onclick="setSize('phone',this)">手机</button><button id=pTablet onclick="setSize('tablet',this)">平板</button><button id=pLand onclick="setSize('tablet_land',this)">平板横</button></span>
+  <button onclick=key(4)>返回</button><button onclick=key(3)>主页</button>
+  <input id=txt placeholder="输入文字…"><button onclick=sendText()>输入</button>
+  <button onclick=restart()>重启App</button>
+  <button onclick=install()>推装新APK</button>
+</div>
+<div id=stage><canvas id=screen></canvas></div>
+<div id=hint id=hint>点画面=在设备上点同处 · H264 实时流</div>
+<script>
+const Q=new URLSearchParams(location.search), SERIAL=Q.get('serial')||'emulator-5554';
+const cv=document.getElementById('screen'), ctx=cv.getContext('2d'), info=document.getElementById('info');
+window.__frames=0;
+
+// ---------- H264(WebCodecs) ----------
+let sps=null,pps=null,dec=null,ts=0,usingImg=false,ws=null;
+const SC=new Uint8Array([0,0,0,1]);
+function hx(n){return ('0'+(n&0xff).toString(16)).slice(-2)}
+function withSC(n){const o=new Uint8Array(4+n.length);o.set(SC);o.set(n,4);return o}
+function cat(arrs){let L=0;arrs.forEach(a=>L+=a.length);const o=new Uint8Array(L);let p=0;arrs.forEach(a=>{o.set(a,p);p+=a.length});return o}
+function onFrame(f){window.__frames++;if(cv.width!==f.displayWidth){cv.width=f.displayWidth;cv.height=f.displayHeight}ctx.drawImage(f,0,0);f.close();info.textContent=SERIAL+' · 实时 '+window.__frames+'帧'}
+function ensureDec(){ if(dec||!sps)return;
+  const codec='avc1.'+hx(sps[1])+hx(sps[2])+hx(sps[3]);
+  try{ dec=new VideoDecoder({output:onFrame,error:e=>{console.log('dec',e);fallbackImg()}});
+       dec.configure({codec,optimizeForLatency:true,hardwareAcceleration:'no-preference'}); }
+  catch(e){ console.log('cfg',e); fallbackImg(); }
+}
+function handleNal(nal){ if(!nal.length)return; const t=nal[0]&0x1f;
+  if(t===7){sps=nal.slice();ensureDec()} else if(t===8){pps=nal.slice()}
+  else if(t===5||t===1){ if(!dec||dec.state!=='configured')return;
+    let data = (t===5&&sps&&pps)? cat([withSC(sps),withSC(pps),withSC(nal)]) : withSC(nal);
+    try{ dec.decode(new EncodedVideoChunk({type:t===5?'key':'delta',timestamp:ts,data})); ts+=33333; }catch(e){console.log('dx',e)} }
+}
+let nb=new Uint8Array(0);
+function findSC(a,from){ for(let i=from;i+3<a.length;i++){ if(a[i]===0&&a[i+1]===0){ if(a[i+2]===1)return[i,3]; if(a[i+2]===0&&a[i+3]===1)return[i,4]; } } return null }
+function feed(ab){ const n=new Uint8Array(ab); const m=new Uint8Array(nb.length+n.length); m.set(nb);m.set(n,nb.length); nb=m;
+  let s=findSC(nb,0); if(!s)return; let pos=s[0];
+  while(true){ const sc=(nb[pos+2]===1)?3:4; const nx=findSC(nb,pos+3); if(!nx)break;
+    handleNal(nb.subarray(pos+sc,nx[0])); pos=nx[0]; }
+  nb=nb.slice(pos);
+}
+function connectH264(){ if(!('VideoDecoder' in window)){fallbackImg();return}
+  try{ ws=new WebSocket((location.protocol==='https:'?'wss':'ws')+'://'+location.host+'/dev/h264?serial='+encodeURIComponent(SERIAL)); ws.binaryType='arraybuffer';
+    ws.onmessage=e=>feed(e.data); ws.onopen=()=>info.textContent=SERIAL+' · 流已连'; ws.onerror=()=>{}; ws.onclose=()=>{ if(!usingImg) setTimeout(()=>{location.reload()},1500); }; }
+  catch(e){ fallbackImg(); }
+}
+// ---------- 回退: 截图轮询 ----------
+function fallbackImg(){ if(usingImg)return; usingImg=true; try{ws&&ws.close()}catch(e){}
+  const img=new Image(); img.id='screen'; img.style.cssText=cv.style.cssText; cv.replaceWith(img);
+  info.textContent=SERIAL+' · 截图模式(无WebCodecs)';
+  img.addEventListener('click',e=>{const r=img.getBoundingClientRect();tapN((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height)});
+  async function loop(){ try{const r=await fetch('/dev/screen?serial='+SERIAL+'&t='+Date.now()); if(r.ok){img.src=URL.createObjectURL(await r.blob())}}catch(e){} setTimeout(loop,500); } loop();
+}
+// ---------- 控制 ----------
+async function tapN(nx,ny){ await fetch('/dev/tap',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serial:SERIAL,nx,ny})}); }
+cv.addEventListener('click',e=>{const r=cv.getBoundingClientRect();tapN((e.clientX-r.left)/r.width,(e.clientY-r.top)/r.height)});
+async function key(k){ await fetch('/dev/key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serial:SERIAL,key:k})}); }
+async function sendText(){ await fetch('/dev/text',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serial:SERIAL,s:document.getElementById('txt').value})}); }
+async function restart(){ info.textContent='重启App…'; await fetch('/dev/restart_app',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serial:SERIAL})}); }
+async function install(){ info.textContent='推装中…'; const r=await fetch('/dev/install',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serial:SERIAL})}); const j=await r.json(); info.textContent='装包:'+(j.ok?'成功':'失败'); }
+async function setSize(preset,btn){ document.querySelectorAll('.seg button').forEach(b=>b.classList.remove('on')); btn&&btn.classList.add('on');
+  info.textContent='切'+preset+'…'; await fetch('/dev/size',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({serial:SERIAL,preset})});
+  setTimeout(()=>location.reload(),1200); }  // 分辨率变了, 重连流
+connectH264();
+</script></body></html>

@@ -1,0 +1,24 @@
+/* settings.css — 「我的」tab(#meView)与连接编辑页(#connectView)。 */
+
+#meView .scroll { padding-bottom: calc(32px + var(--safe-bottom)); }
+
+/* 连接编辑页正文 */
+.connect-body { padding: 20px 18px calc(32px + var(--safe-bottom)); max-width: 520px; width: 100%; margin: 0 auto; }
+.connect-body .lg-field-label { display: block; font-size: 12px; font-weight: 600; color: var(--fg-3); margin: 16px 4px 6px; }
+.connect-input {
+  width: 100%; background: var(--surface-input); border: 1px solid var(--line); border-radius: var(--r-input);
+  padding: 13px 16px; font-size: 15px; font-family: var(--mono);
+}
+.connect-hint { font-size: 13px; color: var(--fg-3); line-height: 1.6; margin: 10px 4px 0; }
+.connect-status { margin-top: 14px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; color: var(--fg-2); }
+.connect-status.bad { color: var(--bad); }
+.connect-status.ok { color: var(--ok); }
+.connect-actions { margin-top: 18px; }
+
+/* 关于版本大字 */
+.me-version { font-family: var(--mono); color: var(--fg-2); }
+
+/* ══ 平板 ≥600(--bp-phone):设置分组行限宽 680 居中(待 base.css .wide-measure 统一工具类后替换)。 ══ */
+@media (min-width: 600px) {
+  #meView .lg-group { max-width: 680px; width: 100%; margin-left: auto; margin-right: auto; }
+}

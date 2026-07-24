@@ -1,5 +1,8 @@
 apply plugin: 'com.android.application'
 
+def lofaVersionCode = System.getenv('LOFA_VERSION_CODE') ?: '16'
+def lofaVersionName = System.getenv('LOFA_VERSION_NAME') ?: '1.0.16'
+
 android {
     namespace "cc.colorc.lofa"
     compileSdk rootProject.ext.compileSdkVersion
@@ -7,8 +10,8 @@ android {
         applicationId "cc.colorc.lofa"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "1.0.3"
+        versionCode lofaVersionCode.toInteger()
+        versionName lofaVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,6 +21,10 @@ android {
     }
     buildTypes {
         release {
+            // The currently installed private builds use the standard Android debug key.
+            // Keep signature compatibility for this migration candidate while producing
+            // a non-debuggable release APK. Public distribution needs a separate key plan.
+            signingConfig signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -36,6 +43,8 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // 反向 adb 隧道桥(DevTunnelService)用 OkHttp WebSocket 连 PC 中继；Capacitor 未传递此依赖，显式引入。
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

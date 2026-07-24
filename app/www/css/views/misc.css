@@ -1,0 +1,16 @@
+/* misc.css — 全屏 iframe 推入页(笔记 / 代码面板)与悬浮返回钮等杂项。 */
+
+#notesView, #codeView, #webView { background: var(--surface-input); }
+.iframe-full { flex: 1; width: 100%; border: 0; background: var(--surface-input); }
+#codeView .iframe-full { background: #1e1e1e; }
+
+/* 代码面板把整屏让给 VSCode,用角上悬浮返回钮代替顶栏 */
+.float-back {
+  position: absolute; top: calc(var(--safe-top) + 6px); left: 6px; z-index: 50;
+  width: 44px; height: 44px; border-radius: var(--r-pill);
+  background: rgba(20, 24, 34, .55); color: #fff; border: 1px solid rgba(255, 255, 255, .18);
+  display: grid; place-items: center;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+}
+.float-back:active { background: rgba(20, 24, 34, .92); }
+.float-back svg { width: 22px; height: 22px; }

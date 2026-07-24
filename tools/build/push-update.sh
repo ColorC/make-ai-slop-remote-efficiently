@@ -25,11 +25,13 @@ OLD=$("$ADB" -s "$TARGET" shell dumpsys package "$PKG" 2>/dev/null | grep -oE "v
 echo "● 当前手机已装: ${OLD:-未安装}"
 
 # 2) 版本号 +1 (让更新可检测)
-CUR=$(grep -oE "versionCode [0-9]+" "$GRADLE" | grep -oE "[0-9]+" | head -1)
-NEW=$((CUR + 1))
-sed -i "s/versionCode $CUR/versionCode $NEW/" "$GRADLE"
-sed -i "s/versionName \"[^\"]*\"/versionName \"1.0.$NEW\"/" "$GRADLE"
-echo "● 版本: versionCode $CUR → $NEW  (versionName 1.0.$NEW)"
+#    build.gradle 走 LOFA_VERSION_CODE/LOFA_VERSION_NAME 环境变量(无硬编码 versionCode 行),
+#    以手机端已装 versionName 为基准 +1,环境变量传给 gradle;不再 sed build.gradle(旧逻辑会把
+#    `versionCode lofaVersionCode.toInteger()` 咬成 `versionCode 1lofaVersionCode...` 直接挂构建)。
+OLD_CODE=$("$ADB" -s "$TARGET" shell dumpsys package "$PKG" 2>/dev/null | grep -oE "versionCode=[0-9]+" | head -1 | grep -oE "[0-9]+")
+NEW=$(( ${OLD_CODE:-29} + 1 ))
+export LOFA_VERSION_CODE="$NEW" LOFA_VERSION_NAME="1.0.$NEW"
+echo "● 版本: versionCode ${OLD_CODE:-?} → $NEW  (versionName 1.0.$NEW)"
 
 # 3) 构建
 echo "● 构建中 (cap sync + assembleDebug)…"

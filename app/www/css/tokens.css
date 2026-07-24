@@ -1,0 +1,158 @@
+/* tokens.css — LOFA 消费层设计 token。色 / 描图纸 / 圆角 / 字阶 / 间距 / 动效曲线 / z 层。
+   设计真源 = omnicompany docs/projects/frontend-design/dashboard/theme.css(2026-07-18 裁决);
+   值须与真源对账(token_drift.py),调主题改真源。
+   规矩:除本文件外任何地方不得散落硬编码色值;描图纸(本版"玻璃")只用于导航/功能层。
+
+   2026-07-19 · V2 阶段四第一波「蓝图精制」(主题 G,Blue Prince 做透版):
+   核心 token 值整体切换为蓝图 G 参数,设计参数真源 =
+   docs/plans/frontend-design/[2026-07-18]TRIFORM-UX-REDESIGN-V2/demo/theme.css [data-theme="g"]。
+   三层深度:底图板 scene(格纸纹理)/ 图纸 paper(平滑纸面,文字面)/ 描图纸 tracing(悬浮物)。
+   纹理分区铁律:格纸纹理只落 scene/chrome/empty;content-text 区(行/卡/正文/按钮面)禁纹理。
+   --bp-* 系列与真源 --fp-bp-* 块一一对账(同值,仅去 fp- 前缀)。 */
+
+:root {
+  /* ── 层 1 · 底图板 scene(G.4 纹理回强:细格 .05/26px、主格 .08/130px、径向光 .34,静止无动画) ── */
+  --bp-scene: #091a3e;
+  --bp-scene-grad:
+    repeating-linear-gradient(0deg, rgba(190,220,255,.05) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(90deg, rgba(190,220,255,.05) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(0deg, rgba(190,220,255,.08) 0 1px, transparent 1px 130px),
+    repeating-linear-gradient(90deg, rgba(190,220,255,.08) 0 1px, transparent 1px 130px),
+    radial-gradient(130% 110% at 50% -10%, rgba(36,80,146,.34), transparent 60%);
+
+  /* ── 背景与内容层(层 2 · 图纸 paper:平滑纸面,文字面禁纹理) ── */
+  --bg: #091a3e;             /* = --bp-scene */
+  --surface: #133163;        /* 图纸 paper:卡片 / 列表行 / 气泡底(一切文字面) */
+  --surface-2: #173a72;      /* paper-2:hover / 内嵌亮一档 */
+  --surface-input: #0d2450;  /* 输入框 / 终端底(= G --v2-solid 深图板) */
+  --line: rgba(235,245,255,.5);        /* 白色绘图线·主档 */
+  --line-strong: rgba(235,245,255,.75); /* 绘图线·强档(选中/hover) */
+  --line-2: rgba(235,245,255,.2);      /* 绘图线·弱档 */
+
+  --fg: #eef4ff;
+  --fg-2: #a3bce0;
+  --fg-3: #6e8cb8;
+
+  /* accent = 白线(制图语言:强调=更亮的线,非色块);朱红 seal 只给印章/在跑/关键状态 */
+  --accent: #eef4ff;
+  --accent-ink: #0d2450;     /* 白 accent 上的深墨字(= G --v2-accent-fg) */
+  --ok: #7fd4a8;
+  --busy: #e2c05a;
+  --bad: #e0685f;
+  --accent-soft: rgba(238,244,255,.1);
+  --ok-soft: color-mix(in srgb, var(--ok) 13%, transparent);
+  --busy-soft: color-mix(in srgb, var(--busy) 13%, transparent);
+  --bad-soft: color-mix(in srgb, var(--bad) 13%, transparent);
+
+  /* ── 蓝图语义 token(--bp-* ↔ 真源 --fp-bp-*) ── */
+  --bp-seal: #d64541;              /* 朱红:印章/图钉/在跑/primary */
+  --bp-seal-soft: rgba(214,69,65,.2);
+  --bp-stamp-idle: #8fa4c8;        /* 驳回章:蓝灰退稿 */
+  --bp-brass: #b08d3e;             /* 黄铜:组头/计数徽章/focus 环 */
+  --bp-brass-hi: #d3ac62;
+  --bp-brass-soft: rgba(176,141,62,.16);
+  --bp-hatch: repeating-linear-gradient(45deg, rgba(255,255,255,.09) 0 2px, transparent 2px 7px);
+  /* 颜色内联写死(不同 var(--ok)):token_drift 按字面值对账,与真源 --fp-bp-hatch-fill 保持一致 */
+  --bp-hatch-fill: repeating-linear-gradient(45deg, #7fd4a8 0 2px, rgba(127,212,168,.22) 2px 6px);
+  --bp-vellum: #e8dcc0;            /* 牛皮纸目录卡 */
+  --bp-vellum-ink: #3a332a;
+  --bp-doc: #efe8d8;               /* 米色文档卡(阅读区暖纸) */
+  --bp-doc-ink: #2a2a26;           /* 文档卡墨色字 */
+  --bp-frame-w: 2px;               /* 白色厚框(G.5:卡/行/分组 2px 白框) */
+  --bp-tick: 12px;                 /* 制图刻度 tick 高(G.4) */
+  --bp-icon-tile: 40px;            /* 行图标制图底衬(G.4) */
+  --bp-icon-nav: 24px;             /* 胶囊 nav 图标(G.4) */
+
+  /* provider 标识色:2026-07-18 裁决收敛为 accent(去 AI 味;保留变量名,消费点不动) */
+  --provider-claude: var(--accent);
+  --provider-codex: var(--accent);
+  --provider-omni: var(--accent);
+  --provider-term: var(--accent);
+
+  /* ── 描图纸 tracing(层 3,本版的"玻璃",只给导航/浮层;G.3① 深色描图纸) ── */
+  --glass-nav-fill: rgba(16,28,52,.55);
+  --glass-nav-blur: blur(8px);
+  --glass-sheet-fill: rgba(16,28,52,.55);
+  --glass-sheet-blur: blur(8px);
+  /* ── 蓝图玻璃(2026-07-19 V2 阶段四第五波「材质裁决」:白色文字区域面板/按钮专用;
+     值 = --surface #133163 的透明化 .58/hover .68/文字重行卡 .72;长文区(气泡/米卡)不用,
+     保持高不透明。与描图纸族并存:导航/sheet/弹层仍走上面两档。 ── */
+  --bp-glass-fill: rgba(19,49,99,.58);
+  --bp-glass-fill-hover: rgba(19,49,99,.68);
+  --bp-glass-fill-text: rgba(19,49,99,.72);
+  --bp-glass-blur: blur(6px) saturate(150%);
+  /* G 无 rim 光(demo --v2-rim:none);box-shadow 列表语法不接受 none,用零影占位 */
+  --glass-edge: 0 0 0 0 rgba(0,0,0,0);
+  /* 纸叠纸硬错位影(按下 translateY(1px) 凹入) */
+  --shadow-nav: 2px 2px 0 rgba(6,16,38,.55), 5px 5px 0 rgba(6,16,38,.28);
+  --shadow-sheet: 3px 3px 0 rgba(6,16,38,.5), 8px 8px 0 rgba(6,16,38,.25);
+  --shadow-card: 2px 2px 0 rgba(6,16,38,.5);
+  --scrim: rgba(4,12,28,.5);
+
+  /* ── 圆角(制图感=锐利:G 刻度 2/3/5;sheet 保 20 上弧,demo .v2-sheet 同值) ── */
+  --r-pill: 999px;
+  --r1: 2px; --r2: 3px; --r3: 5px;  /* 刻度(自真源补齐) */
+  --r-card: 5px;     /* = --r3 档 */
+  --r-sheet: 20px;
+  --r-input: 2px;    /* = --r1 档(demo .v2-search 同) */
+
+  /* ── 字阶(字号地板 12px:G 全域功能文字 ≥--fs-4;--font-scale 只乘正文类) ── */
+  --fs-1: 18px; --fs-2: 15px; --fs-3: 13px; --fs-4: 12px;
+  --lh: 1.5;
+  --font-scale: 1;
+  /* 三栈(G.3.1 + G.6 硬规则:mono/script 栈必须带 CJK 回落,display LXGW 恒为第一) */
+  --font-sans: 'Inter','PingFang SC','Microsoft YaHei','DengXian',system-ui,sans-serif;
+  --font-display: 'LXGW WenKai','Noto Serif SC','Source Han Serif SC','STSong','SimSun',serif;
+  --font-script: 'LXGW WenKai','Segoe Script','Kaiti SC','STKaiti','KaiTi','楷体','Noto Serif SC',cursive;
+  --mono: 'Berkeley Mono',ui-monospace,'Cascadia Code','SF Mono',Consolas,'LXGW WenKai','Noto Serif SC','Microsoft YaHei',monospace;
+
+  /* ── 形态断点(手机 <600 / 平板 600-1024 / 桌面 >1024) ── */
+  --bp-phone: 600px; --bp-desktop: 1024px;
+
+  /* ── 动效 ── */
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
+  --t-push: 300ms;
+  --t-pop: 200ms;
+  --t-sheet: 320ms;
+  --t-menu: 180ms;
+  --t-fast: 150ms;
+
+  /* ── z 层 ── */
+  --z-nav: 100;
+  --z-fab: 110;
+  --z-banner: 120;
+  --z-layer: 200;
+  --z-toast: 300;
+
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+/* 「减少透明度」:整体把描图纸替换为同色实底并去 blur(尊重系统偏好或用户开关)。 */
+html.no-glass {
+  --glass-nav-fill: #0d2450;
+  --glass-nav-blur: none;
+  --glass-sheet-fill: #133163;
+  --glass-sheet-blur: none;
+  --glass-edge: 0 0 0 0 rgba(0,0,0,0);
+  /* 蓝图玻璃同规:换同色实底(--surface/--surface-2)并去 blur */
+  --bp-glass-fill: #133163;
+  --bp-glass-fill-hover: #173a72;
+  --bp-glass-fill-text: #133163;
+  --bp-glass-blur: none;
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass-nav-fill: #0d2450;
+    --glass-nav-blur: none;
+    --glass-sheet-fill: #133163;
+    --glass-sheet-blur: none;
+    --bp-glass-fill: #133163;
+    --bp-glass-fill-hover: #173a72;
+    --bp-glass-fill-text: #133163;
+    --bp-glass-blur: none;
+  }
+}

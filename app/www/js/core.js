@@ -1,52 +1,96 @@
-// core.js — LOFA 移动端共享地基(后续 tab 都复用)。
-//   · 连接/会话状态  · API fetch  · WS 重连封装  · toast/loading/error/banner
-//   · 极简 markdown  · 日志回传  · 常驻通知  · OTA 自更新  · 计数轮询  · 弹窗 prompt
-// 纯 vanilla, 无构建步骤; Capacitor WebView(Chromium)原生支持 ES module。
+// core.js — LOFA 共享地基。
+//   · 连接健康(banner 驱动)  · API fetch / WS URL  · 全局字号  · 极简 markdown
+//   · 日志回传  · 常驻通知  · OTA 自更新(toast + 我的 tab 红点)  · 计数轮询
+//   · promptModal/confirmModal/pickModal 桥接到 ui 新实现(旧签名不变)
+// 纯 vanilla,无构建;视图机制在 router.js,组件在 ui.js。
+
+import { openModal, openSheet, banner } from './ui.js'
 
 export const LS_KEY = 'lofa.baseUrl'
-export const DEFAULT_BASE = '10.3.43.246:8210'   // 硬编码默认本机地址(免手输), 设置页可改
+export const DEFAULT_BASE = 'https://10.3.43.246:12443'   // 唯一对外端口(Caddy HTTPS)
 
-// 连接态(单例, 各模块共享)
-export const store = { base: null }
+// 连接态单例。code = 主机 /lofa-config.json 下发的代码面板配置。update = OTA 待装清单。
+export const store = { base: null, code: null, update: null }
 
 export const $ = (id) => document.getElementById(id)
 export function esc(s) {
   return (s == null ? '' : String(s)).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
 }
-export function toast(m) {
-  const t = $('toast'); if (!t) return
-  t.textContent = m; t.classList.add('show')
-  setTimeout(() => t.classList.remove('show'), 1600)
-}
-export function setDot(s) { const d = $('dot'); if (d) d.className = 'dot' + (s ? ' ' + s : '') }
-export function setBar(text) { const b = $('barSub'); if (b) b.textContent = text }
 
-// 视图路由 + 顶栏返回键 + tab 可见性
-const VIEWS = ['listView', 'detailView', 'settingsView', 'emptyView', 'chatListView', 'convView', 'notesView', 'noteDetailView', 'projectsView', 'projectDetailView']
-const CONNECTED_VIEWS = ['listView', 'detailView', 'chatListView', 'convView', 'notesView', 'noteDetailView', 'projectsView', 'projectDetailView']
-const BACK_VIEWS = ['detailView', 'convView', 'noteDetailView', 'projectDetailView']
-let _curView = null
-export function showView(v) {
-  _curView = v
-  VIEWS.forEach((id) => { const el = $(id); if (el) el.classList.toggle('show', id === v) })
-  const back = $('btnBack'); if (back) back.style.display = BACK_VIEWS.includes(v) ? 'block' : 'none'
-  const tb = $('tabbar'); if (tb) tb.style.display = CONNECTED_VIEWS.includes(v) ? 'flex' : 'none'
+// ── toast(底部胶囊,ok/err 变体;多条堆叠) ──────────────────────────────────
+const _raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : ((cb) => setTimeout(cb, 0))
+export function toast(m, opts) {
+  opts = opts || {}
+  const host = $('toast'); if (!host) return
+  const el = document.createElement('div'); el.className = 'lg-toast' + (opts.type ? (' ' + opts.type) : '')
+  el.textContent = m; host.appendChild(el)
+  _raf(() => el.classList.add('show'))
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => { try { host.removeChild(el) } catch (e) {} }, 200) }, opts.ms || 1900)
 }
-export function curView() { return _curView }
-export function isView(v) { return _curView === v }
+
+// ── 全局字号档位:只按倍数缩放正文/消息 font-size(.scale-text 与消息类) ──────
+export const FONT_SCALES = [
+  { value: 'sm', label: '小', scale: 1 },
+  { value: 'md', label: '中', scale: 1.15 },
+  { value: 'lg', label: '大', scale: 1.3 },
+  { value: 'xl', label: '特大', scale: 1.5 },
+]
+const FONT_KEY = 'lofa.fontScale'
+export function getFontScale() { try { return localStorage.getItem(FONT_KEY) || 'sm' } catch (e) { return 'sm' } }
+function applyFontScale(v) {
+  const f = FONT_SCALES.find((x) => x.value === v) || FONT_SCALES[0]
+  document.documentElement.style.setProperty('--font-scale', String(f.scale))
+  return f.value
+}
+export function setFontScale(v) { try { localStorage.setItem(FONT_KEY, v) } catch (e) {} return applyFontScale(v) }
+export function initFontScale() { return applyFontScale(getFontScale()) }
+
+// ── 减少透明度 / 减少动效(存 localStorage,尊重系统偏好) ────────────────────
+export function initA11yPrefs() {
+  let g = false, m = false
+  try { g = localStorage.getItem('lofa.reduceGlass') === '1' } catch (e) {}
+  try { m = localStorage.getItem('lofa.reduceMotion') === '1' } catch (e) {}
+  document.documentElement.classList.toggle('no-glass', g)
+  document.documentElement.classList.toggle('reduce-motion', m)
+}
+export function setReduceGlass(on) { try { localStorage.setItem('lofa.reduceGlass', on ? '1' : '0') } catch (e) {} document.documentElement.classList.toggle('no-glass', !!on) }
+export function setReduceMotion(on) { try { localStorage.setItem('lofa.reduceMotion', on ? '1' : '0') } catch (e) {} document.documentElement.classList.toggle('reduce-motion', !!on) }
+export function getReduceGlass() { try { return localStorage.getItem('lofa.reduceGlass') === '1' } catch (e) { return false } }
+export function getReduceMotion() { try { return localStorage.getItem('lofa.reduceMotion') === '1' } catch (e) { return false } }
 
 // ── 地址工具 ────────────────────────────────────────────────────────────────
 export function normBase(v) {
   v = (v || '').trim().replace(/\/+$/, '')
   if (!v) return ''
-  if (!/^https?:\/\//.test(v)) v = 'http://' + v
+  if (!/^https?:\/\//.test(v)) v = 'https://' + v
   return v
 }
-export function getSaved() { try { return localStorage.getItem(LS_KEY) || '' } catch (e) { return '' } }
+export function getSaved() {
+  try {
+    let v = localStorage.getItem(LS_KEY) || ''
+    if (v && (/^http:\/\//i.test(v) || /:8210(\b|\/|$)/.test(v))) v = ''   // 旧架构存值作废
+    return v
+  } catch (e) { return '' }
+}
 export function save(b) { try { localStorage.setItem(LS_KEY, b) } catch (e) {} }
 export function hostLabel() { return store.base ? store.base.replace(/^https?:\/\//, '') : '' }
 
-// ── API fetch(统一 base + no-store + json/text 协商) ────────────────────────
+// ── 代码面板地址:来自主机下发的 /lofa-config.json ────────────────────────────
+export async function fetchCodeConfig() {
+  try {
+    let cfg = await api('/lofa-config.json')
+    if (typeof cfg === 'string') { try { cfg = JSON.parse(cfg) } catch (e) { cfg = null } }
+    store.code = (cfg && cfg.code) || null
+  } catch (e) { store.code = null; LOG.rec('error', ['code.config.fail', e.message || e]) }
+}
+export function codeUrl() {
+  const c = store.code
+  if (!store.base || !c || c.enabled === false || !c.path) return ''
+  const sep = c.token ? ('?tkn=' + encodeURIComponent(c.token)) : ''
+  return store.base.replace(/\/+$/, '') + c.path + sep
+}
+
+// ── API fetch ─────────────────────────────────────────────────────────────────
 export async function api(path, opts) {
   const r = await fetch(store.base + path, Object.assign({ cache: 'no-store' }, opts || {}))
   if (!r.ok) {
@@ -57,14 +101,16 @@ export async function api(path, opts) {
   const ct = r.headers.get('content-type') || ''
   return ct.indexOf('application/json') >= 0 ? r.json() : r.text()
 }
-// 便捷封装
 export const apiJson = (path, method, body) =>
   api(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
 
-// ── 复用 UI 片段(卡片列表 / loading / error) ───────────────────────────────
-export const loadingHtml = (msg) => '<div class="empty">' + esc(msg || '加载中…') + '</div>'
-export const errorHtml = (msg) => '<div class="empty">加载失败: ' + esc(msg) + '</div>'
-export const emptyHtml = (msg) => '<div class="empty">' + esc(msg || '暂无内容') + '</div>'
+// WS URL(http→ws / https→wss)
+export function wsUrl(sid) {
+  return store.base.replace(/^http/, 'ws') + '/api/cc/chat/sessions/' + encodeURIComponent(sid) + '/ws'
+}
+export function termWsUrl(sid) {
+  return store.base.replace(/^http/, 'ws') + '/api/cc/sessions/' + encodeURIComponent(sid) + '/ws'
+}
 
 // ── 极简 markdown(无外网依赖) ───────────────────────────────────────────────
 export function mdToHtml(src) {
@@ -96,75 +142,39 @@ export function mdToHtml(src) {
   return out.join('')
 }
 
-// ── 弹窗 prompt(WebView 里 window.prompt 不可靠, 自建 overlay) ───────────────
+// ── prompt/confirm/pick 弹窗:桥接到 ui 新实现(旧签名不变) ────────────────────
 export function promptModal(title, value, opts) {
   opts = opts || {}
   return new Promise((resolve) => {
-    const ov = document.createElement('div'); ov.className = 'modal-ov'
-    ov.innerHTML =
-      '<div class="modal">' +
-      '<div class="modal-t">' + esc(title) + '</div>' +
-      (opts.textarea
-        ? '<textarea class="modal-in" rows="4">' + esc(value || '') + '</textarea>'
-        : '<input class="modal-in" value="' + esc(value || '') + '">') +
-      '<div class="modal-btns">' +
-      '<button class="modal-cancel">取消</button>' +
-      '<button class="modal-ok">' + esc(opts.okText || '确定') + '</button>' +
-      '</div></div>'
-    document.body.appendChild(ov)
-    const inp = ov.querySelector('.modal-in')
-    setTimeout(() => { try { inp.focus() } catch (e) {} }, 30)
-    const done = (val) => { try { document.body.removeChild(ov) } catch (e) {}; resolve(val) }
-    ov.querySelector('.modal-cancel').onclick = () => done(null)
-    ov.querySelector('.modal-ok').onclick = () => done(inp.value)
-    ov.onclick = (e) => { if (e.target === ov) done(null) }
+    openModal({
+      title, value, okText: opts.okText,
+      input: !opts.textarea, textarea: !!opts.textarea,
+      onOk: (v) => resolve(v), onCancel: () => resolve(null),
+    })
   })
 }
-
-// 二次确认弹窗(批量动作/删除前用)。resolve(true) 确认, resolve(false) 取消。
 export function confirmModal(title, opts) {
   opts = opts || {}
   return new Promise((resolve) => {
-    const ov = document.createElement('div'); ov.className = 'modal-ov'
-    ov.innerHTML =
-      '<div class="modal">' +
-      '<div class="modal-t">' + esc(title) + '</div>' +
-      (opts.body ? '<div class="modal-body">' + esc(opts.body) + '</div>' : '') +
-      '<div class="modal-btns">' +
-      '<button class="modal-cancel">' + esc(opts.cancelText || '取消') + '</button>' +
-      '<button class="modal-ok' + (opts.danger ? ' danger' : '') + '">' + esc(opts.okText || '确定') + '</button>' +
-      '</div></div>'
-    document.body.appendChild(ov)
-    const done = (val) => { try { document.body.removeChild(ov) } catch (e) {}; resolve(val) }
-    ov.querySelector('.modal-cancel').onclick = () => done(false)
-    ov.querySelector('.modal-ok').onclick = () => done(true)
-    ov.onclick = (e) => { if (e.target === ov) done(false) }
+    openModal({
+      title, body: opts.body, okText: opts.okText, cancelText: opts.cancelText, danger: opts.danger,
+      onOk: () => resolve(true), onCancel: () => resolve(false),
+    })
   })
 }
-
-// 单选弹窗(effort/model 等)
+// 单选:改走 radio sheet(点选即生效自动收起),替代旧两段弹窗。
 export function pickModal(title, options, current) {
   return new Promise((resolve) => {
-    const ov = document.createElement('div'); ov.className = 'modal-ov'
-    ov.innerHTML =
-      '<div class="modal">' +
-      '<div class="modal-t">' + esc(title) + '</div>' +
-      '<div class="modal-opts">' +
-      options.map((o) =>
-        '<button class="modal-opt' + (o.value === current ? ' cur' : '') + '" data-v="' + esc(o.value) + '">' + esc(o.label) + '</button>'
-      ).join('') +
-      '</div>' +
-      '<div class="modal-btns"><button class="modal-cancel">取消</button></div>' +
-      '</div>'
-    document.body.appendChild(ov)
-    const done = (val) => { try { document.body.removeChild(ov) } catch (e) {}; resolve(val) }
-    Array.prototype.forEach.call(ov.querySelectorAll('.modal-opt'), (b) => { b.onclick = () => done(b.getAttribute('data-v')) })
-    ov.querySelector('.modal-cancel').onclick = () => done(null)
-    ov.onclick = (e) => { if (e.target === ov) done(null) }
+    let picked = false
+    openSheet({
+      title,
+      rows: (options || []).map((o) => ({ type: 'radio', label: o.label, on: o.value === current, onTap: () => { picked = true; resolve(o.value) } })),
+      onClose: () => { if (!picked) resolve(null) },
+    })
   })
 }
 
-// ── 日志地基: 缓冲 + 批量回传 /api/android/log ──────────────────────────────
+// ── 日志地基:缓冲 + 批量回传 ─────────────────────────────────────────────────
 export const LOG = (function () {
   const buf = []
   function rec(level, args) {
@@ -187,7 +197,7 @@ export const LOG = (function () {
   return { rec, flush }
 })()
 
-// ── 静默常驻通知: 下拉栏显示 待审 + 待输入计数(无声无震) ────────────────────
+// ── 静默常驻通知 ─────────────────────────────────────────────────────────────
 export const NOTIF = (function () {
   function ln() { return (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.LocalNotifications) || null }
   let ready = false, last = ''
@@ -210,8 +220,10 @@ export const NOTIF = (function () {
   return { init, update, clear }
 })()
 
-// ── 计数轮询 ────────────────────────────────────────────────────────────────
+// ── 计数轮询(审阅未读 → 底 tab badge + 常驻通知) ────────────────────────────
 let _pollTimer = null
+let _badgeCb = () => {}
+export function setBadgeListener(cb) { _badgeCb = cb || (() => {}) }
 async function pollCounts() {
   if (!store.base) return
   try {
@@ -225,12 +237,14 @@ async function pollCounts() {
       agentN = list.filter((a) => { const s = String(a.run_status || '').toLowerCase(); return /wait|input|block|review|need|pend/.test(s) }).length
     } catch (e) {}
     NOTIF.update(reviewN, agentN, pushedN)
+    _badgeCb({ review: pushedN || reviewN })
   } catch (e) { LOG.rec('error', ['poll.fail', e.message || e]) }
 }
 export function startPolling() { if (_pollTimer) return; pollCounts(); _pollTimer = setInterval(pollCounts, 15000) }
 
-// ── OTA 自更新 ──────────────────────────────────────────────────────────────
-let _updMani = null
+// ── OTA 自更新:检测到新版 → toast 一次 + 我的 tab 红点(横幅已废) ─────────────
+let _updateCb = () => {}
+export function setUpdateListener(cb) { _updateCb = cb || (() => {}) }
 async function ownVersionCode() {
   try { const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App; if (!A) return 0; const info = await A.getInfo(); return parseInt(info.build, 10) || 0 } catch (e) { return 0 }
 }
@@ -239,14 +253,15 @@ export async function checkUpdate() {
   try {
     const r = await api('/api/android/apk/version')
     const m = r && r.manifest
-    if (!m || !m.versionCode) { $('updateBanner').classList.remove('show'); return }
+    if (!m || !m.versionCode) { store.update = null; _updateCb(null); return }
     const own = await ownVersionCode()
     if (m.versionCode > own) {
-      _updMani = m
-      $('updateText').textContent = '发现新版本 ' + (m.versionName || ('#' + m.versionCode)) + '（当前 ' + (own || '?') + '）'
-      $('updateBanner').classList.add('show')
+      const first = !store.update
+      store.update = { manifest: m, versionName: m.versionName || ('#' + m.versionCode), own }
+      if (first) toast('发现新版本 ' + store.update.versionName + '，在「我的」里更新', { type: 'ok', ms: 2600 })
+      _updateCb(store.update)
       LOG.rec('info', ['update.available', m.versionCode, 'own', own])
-    } else { $('updateBanner').classList.remove('show') }
+    } else { store.update = null; _updateCb(null) }
   } catch (e) { LOG.rec('error', ['checkUpdate', e.message || e]) }
 }
 export async function doUpdate() {
@@ -256,36 +271,35 @@ export async function doUpdate() {
     const can = await AI.canInstall()
     if (!can || !can.granted) { toast('请先允许 LOFA「安装未知应用」，开启后再点更新'); await AI.openInstallPermission(); return }
     toast('下载中… 安装器稍后弹出'); LOG.rec('info', ['update.start', store.base])
-    await AI.downloadAndInstall({ url: store.base + '/api/android/apk/latest' })
+    await AI.downloadAndInstall({
+      url: store.base + '/api/android/apk/latest',
+      sha256: String((store.update && store.update.manifest && store.update.manifest.sha256) || ''),
+    })
     LOG.rec('info', ['update.installer-launched'])
   } catch (e) { toast('更新失败: ' + (e.message || e)); LOG.rec('error', ['update.fail', e.message || e]) }
 }
 
-// ── 连接 ────────────────────────────────────────────────────────────────────
-export async function connect(base, onConnected) {
-  setDot(''); setBar(base.replace(/^https?:\/\//, '') + ' · 探测中…')
+// ── 连接(健康探测) ──────────────────────────────────────────────────────────
+// connect(base, onOk?, onFail?):成功 → banner 绿一闪 + onOk;失败 → banner 红 + onFail(msg)。
+// 不再直接切视图(导航交给 app.js/router)。
+export async function connect(base, onOk, onFail) {
+  banner('connecting')
   LOG.rec('info', ['connect.try', base])
   try {
     const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), 6000)
     const r = await fetch(base + '/api/healthz', { signal: ctrl.signal, cache: 'no-store' }); clearTimeout(to)
     if (!r.ok) throw new Error('HTTP ' + r.status)
     const j = await r.json(); if (!j.ok) throw new Error('healthz not ok')
-    store.base = base; setDot('ok'); setBar(base.replace(/^https?:\/\//, ''))
+    store.base = base; banner('connected')
     LOG.rec('info', ['connect.ok', base]); LOG.flush()
     fetch(base + '/api/android/register', { method: 'POST' }).catch(() => {})
     NOTIF.init(); startPolling(); checkUpdate()
-    if (onConnected) onConnected()
+    if (onOk) onOk()
+    fetchCodeConfig()
   } catch (e) {
-    setDot('bad'); setBar('未连接')
+    banner('disconnected')
     const msg = (e.name === 'AbortError') ? '超时(6s) — 网络不通/防火墙/未开局域网绑定' : String(e.message || e)
     LOG.rec('error', ['connect.fail', base, msg]); LOG.flush()
-    const es = $('emptyStatus'); if (es) es.textContent = '连不上 ' + base + '\n' + msg
-    const ss = $('setStatus'); if (ss) ss.textContent = ''
-    showView('emptyView')
+    if (onFail) onFail(msg)
   }
-}
-
-// WS URL(http→ws / https→wss)
-export function wsUrl(sid) {
-  return store.base.replace(/^http/, 'ws') + '/api/cc/chat/sessions/' + encodeURIComponent(sid) + '/ws'
 }

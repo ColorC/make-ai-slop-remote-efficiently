@@ -1,0 +1,200 @@
+/* chat.css — 对话屏(#chatView):顶栏 pill、消息流、工具活动卡片、运行指示、composer。
+   内容层(消息卡/工具卡/终端底)永远实底;玻璃只在顶栏与 composer 外壳。 */
+
+/* ══ 顶栏 pill ══ */
+#chatView .lg-nav-mid { align-items: flex-start; }
+#chatView .lg-nav-title { align-self: stretch; text-align: center; }
+#chatHeadPill { margin: 2px auto 0; display: block; }
+
+.chat-other { position: relative; }
+.chat-other-dot {
+  position: absolute; top: 8px; left: 8px; width: 7px; height: 7px; border-radius: var(--r-pill);
+  background: var(--busy); box-shadow: 0 0 0 2px var(--glass-nav-fill);
+}
+.chat-other-n {
+  position: absolute; top: 5px; right: 4px; min-width: 15px; height: 15px; padding: 0 3px;
+  border-radius: var(--r-pill); background: var(--busy); color: var(--accent-ink);
+  font-size: 12px; font-weight: 800; display: grid; place-items: center; line-height: 1;
+}
+
+/* ══ 消息流 ══ */
+.chat-msgs {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px 14px 18px; background: transparent;
+}
+.msg-row { display: flex; max-width: 100%; }
+.msg-row.user { justify-content: flex-end; }
+.msg-row.ai { justify-content: flex-start; }
+.msg-bubble {
+  max-width: 84%; padding: 10px 14px; border-radius: var(--r-card);
+  font-size: calc(15px * var(--font-scale)); line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.user-bubble { background: var(--accent); color: var(--accent-ink); border-bottom-right-radius: 6px; }
+.ai-bubble {
+  background: var(--surface); color: var(--fg); border: 1px solid var(--line);
+  border-bottom-left-radius: 6px; box-shadow: var(--shadow-card);
+}
+.ai-bubble.md { white-space: normal; }
+.ai-bubble.md > :first-child { margin-top: 0; }
+.ai-bubble.md > :last-child { margin-bottom: 0; }
+.ai-bubble.md p { margin: 0 0 8px; }
+.ai-bubble.md h1, .ai-bubble.md h2, .ai-bubble.md h3 { margin: 12px 0 6px; font-weight: 700; line-height: 1.3; }
+.ai-bubble.md h1 { font-size: 1.25em; } .ai-bubble.md h2 { font-size: 1.15em; } .ai-bubble.md h3 { font-size: 1.05em; }
+.ai-bubble.md ul { margin: 4px 0 8px; padding-left: 20px; }
+.ai-bubble.md li { margin: 2px 0; }
+.ai-bubble.md code { font-family: var(--mono); font-size: .88em; background: var(--surface-2); padding: 1px 5px; border-radius: 6px; }
+.ai-bubble.md pre {
+  margin: 8px 0; padding: 10px 12px; background: var(--surface-input); border: 1px solid var(--line);
+  border-radius: 10px; overflow-x: auto;
+}
+.ai-bubble.md pre code { background: none; padding: 0; font-size: 12px; line-height: 1.5; }
+.ai-bubble.md a { color: var(--accent); text-decoration: underline; }
+
+/* 流式尾部光标 */
+.ai-bubble.streaming::after {
+  content: ''; display: inline-block; width: 7px; height: 1.05em; margin-left: 2px;
+  background: var(--accent); vertical-align: text-bottom; border-radius: 1px; animation: chatCaret 1s steps(1) infinite;
+}
+@keyframes chatCaret { 50% { opacity: 0; } }
+html.reduce-motion .ai-bubble.streaming::after { animation: none; }
+
+/* system 居中小字 */
+.msg-sys {
+  align-self: center; max-width: 90%; text-align: center;
+  font-size: 12px; color: var(--fg-3); padding: 2px 8px; white-space: pre-wrap;
+}
+.msg-sys.err { color: var(--bad); }
+
+/* thinking 折叠 */
+.think { align-self: flex-start; max-width: 84%; }
+.think-head { color: var(--fg-3); font-size: 13px; font-style: italic; padding: 2px 0; }
+.think-body {
+  display: none; margin-top: 4px; padding: 8px 12px; font-size: 13px; color: var(--fg-2);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.think.open .think-body { display: block; }
+
+/* ══ 工具活动卡片 ══ */
+.tool-card {
+  align-self: stretch; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; overflow: hidden;
+}
+.tool-card.running { background: var(--surface-2); }
+.tool-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  padding: 9px 12px; color: var(--fg); min-height: 44px;
+}
+.tool-head:active { background: var(--surface-2); }
+.tool-ic {
+  flex: 0 0 auto; width: 16px; height: 16px; display: grid; place-items: center;
+  font-size: 13px; font-weight: 800; line-height: 1;
+}
+.tool-ic svg { width: 14px; height: 14px; }
+.tool-card.ok .tool-ic { color: var(--ok); }
+.tool-card.error .tool-ic { color: var(--bad); }
+.tool-card.running .tool-ic {
+  border: 2px solid var(--busy-soft); border-top-color: var(--busy); border-radius: 50%;
+  animation: toolSpin .8s linear infinite;
+}
+html.reduce-motion .tool-card.running .tool-ic { animation: none; }
+.tool-name { flex: 0 0 auto; font-family: var(--mono); font-size: 13px; font-weight: 600; }
+.tool-arg { flex: 1 1 auto; min-width: 0; font-family: var(--mono); font-size: 12px; color: var(--fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-dur { flex: 0 0 auto; font-size: 12px; color: var(--fg-3); }
+.tool-body { display: none; padding: 0 12px 10px; }
+.tool-card.open .tool-body { display: block; }
+.tool-sec { margin-top: 8px; }
+.tool-sec-l { font-size: 12px; font-weight: 700; color: var(--fg-3); margin-bottom: 4px; letter-spacing: .03em; }
+.tool-copy { float: right; font-size: 12px; color: var(--accent); padding: 0 0 4px 8px; }
+.tool-pre {
+  margin: 0; padding: 8px 10px; background: var(--surface-input); border: 1px solid var(--line);
+  border-radius: 8px; font-family: var(--mono); font-size: 12px; line-height: 1.5;
+  max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+}
+.tool-pre.err { color: var(--bad); }
+
+/* 工具聚拢组 */
+.tool-group { align-self: stretch; }
+.tool-group-head {
+  display: block; width: 100%; text-align: left; padding: 6px 12px; color: var(--fg-3);
+  font-size: 13px; border: 1px dashed var(--line); border-radius: 10px; background: transparent;
+}
+.tool-group-head::before { content: '▸ '; }
+.tool-group.open .tool-group-head::before { content: '▾ '; }
+.tool-group-body { display: none; flex-direction: column; gap: 8px; margin-top: 8px; }
+.tool-group.open .tool-group-body { display: flex; }
+
+/* ══ 运行指示行 ══ */
+.chat-runline {
+  display: none; flex: 0 0 auto; align-items: center; gap: 8px;
+  padding: 5px 16px; font-size: 12px; color: var(--fg-2); background: transparent;
+}
+.chat-runline.show { display: flex; }
+.chat-run-spin {
+  width: 13px; height: 13px; border: 2px solid var(--accent-soft); border-top-color: var(--accent);
+  border-radius: 50%; animation: toolSpin .8s linear infinite; flex: 0 0 auto;
+}
+html.reduce-motion .chat-run-spin { animation: none; }
+.chat-run-txt { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-run-budget { flex: 0 0 auto; color: var(--fg-3); }
+
+/* ══ composer ══ */
+/* --kb:visualViewport 算出的软键盘高度(chatView.js 写入 #chatView),composer 底 padding 消费之,
+   键盘弹起时吸在键盘上方;WebView 自身 resize 时 kb≈0,与原生顶起并存不重复。 */
+.chat-composer {
+  flex: 0 0 auto; display: flex; align-items: flex-end; gap: 8px;
+  padding: 8px 10px calc(max(8px, var(--safe-bottom)) + var(--kb, 0px));
+  background: var(--glass-nav-fill);
+  -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
+  box-shadow: var(--glass-edge), 0 -8px 24px rgba(0, 0, 0, .3);
+}
+.chat-plus {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: var(--r-pill); display: grid; place-items: center;
+  color: var(--fg-2); background: var(--surface-2);
+}
+.chat-plus:active { background: var(--surface); }
+.chat-plus svg { width: 20px; height: 20px; }
+.chat-input-wrap { position: relative; flex: 1 1 auto; min-width: 0; }
+#chatInput {
+  display: block; width: 100%; resize: none; max-height: 40vh;
+  padding: 9px 14px; background: var(--surface-input); border: 1px solid var(--line);
+  border-radius: var(--r-input); font-size: calc(15px * var(--font-scale)); line-height: 1.4;
+  overflow-y: hidden;
+}
+#chatInput::placeholder { color: var(--fg-3); }
+.chat-send {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: var(--r-pill); display: grid; place-items: center;
+  background: var(--surface-2); color: var(--fg-3);
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out);
+}
+.chat-send svg { width: 22px; height: 22px; }
+.chat-send:disabled { opacity: .55; }
+.chat-send.ready { background: var(--accent); color: var(--accent-ink); }
+.chat-send.stop { background: var(--bad); color: #fff; }
+.chat-send.ready:active, .chat-send.stop:active { transform: scale(.92); }
+
+/* slash 补全浮层(玻璃厚档) */
+.chat-slash {
+  display: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 8px);
+  background: var(--glass-sheet-fill);
+  -webkit-backdrop-filter: var(--glass-sheet-blur); backdrop-filter: var(--glass-sheet-blur);
+  border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-sheet);
+  padding: 6px; z-index: var(--z-layer); max-height: 40vh; overflow-y: auto;
+  -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+}
+.chat-slash.show { display: block; }
+.chat-slash-item {
+  display: block; width: 100%; text-align: left; padding: 9px 12px; border-radius: 9px;
+  font-family: var(--mono); font-size: 14px; color: var(--fg);
+}
+.chat-slash-item.on, .chat-slash-item:active { background: var(--accent-soft); color: var(--fg); }
+
+/* ══ 动画:进行中唯一动效 = spinner(脉冲/呼吸已按 W2 清零) ══ */
+@keyframes toolSpin { to { transform: rotate(360deg); } }
+
+/* ══ 平板 ≥600(--bp-phone):消息列限宽 720 居中,气泡仍按 user/ai 左右对齐。
+   若后续 chatView 加专用 wrapper 钩子(另一 agent 线),把限宽迁到 wrapper。 ══ */
+@media (min-width: 600px) {
+  .chat-msgs > * { max-width: 720px; width: 100%; margin-left: auto; margin-right: auto; }
+}

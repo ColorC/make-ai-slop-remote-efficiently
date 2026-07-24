@@ -1,0 +1,106 @@
+/* term.css — 终端屏(#termView)与附加键条。
+   终端是内容层:容器实底(--surface-input),无玻璃;玻璃只用于 nav 与附加键条。
+   同屏玻璃 ≤2:顶栏 + 附加键条。 */
+
+/* 包裹层:填满 nav 以下;--kb 为软键盘高度,抬起底 padding 让键条吸键盘上方。 */
+.term-wrap {
+  flex: 1; min-height: 0; display: flex; flex-direction: column;
+  padding-bottom: var(--kb, 0px); box-sizing: border-box;
+}
+
+/* ── 顶栏状态点 ── */
+.term-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto;
+  display: inline-block; margin-right: 6px; vertical-align: middle;
+  background: var(--fg-3);
+}
+.term-dot.connecting { background: var(--busy); }
+.term-dot.connected { background: var(--ok); }
+.term-dot.disconnected { background: var(--bad); }
+.term-dot.ended { background: var(--fg-3); }
+
+/* ── 终端区(内容层,实底) ── */
+.term-body {
+  position: relative; flex: 1; min-height: 0;
+  background: var(--surface-input); overflow: hidden;
+}
+.term-screen { position: absolute; inset: 0; padding: 6px 8px 6px 10px; }
+.term-screen .xterm { height: 100%; }
+/* 终端输出滚动区(xterm-viewport 是真滚动容器):overscroll 锁链,滚到底不外泄给视图栈 */
+.term-screen .xterm-viewport { background: transparent !important; overscroll-behavior: contain; }
+
+/* 连接中 / 已退出 覆盖层 */
+.term-overlay {
+  position: absolute; inset: 0; z-index: 2; display: none;
+  align-items: center; justify-content: center;
+  background: rgba(10, 13, 20, .72);
+}
+.term-overlay.show { display: flex; }
+.term-overlay-card { text-align: center; padding: 24px; max-width: 80%; }
+.term-overlay-title { font-size: 15px; color: var(--fg-2); line-height: 1.5; }
+.term-overlay-actions { margin-top: 14px; display: flex; justify-content: center; }
+
+/* ── 附加键条(玻璃 nav 档)——默认隐藏,键盘弹起(或键盘钮手动钉住)才出现,不占常驻屏幕 ── */
+.lg-keys {
+  flex: 0 0 auto; display: none; gap: 6px; align-items: stretch;
+  padding: 6px 6px max(6px, env(safe-area-inset-bottom));
+  background: var(--glass-nav-fill);
+  -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
+  box-shadow: var(--glass-edge);
+}
+.term-wrap.kb-open .lg-keys { display: flex; }
+
+/* 键条收起时的召唤钮:右下角半透明小浮钮(点=呼出键盘+键条) */
+.term-kfab {
+  position: absolute; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 3;
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--glass-nav-fill);
+  -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
+  border: 1px solid var(--line); color: var(--fg-2);
+  font-size: 20px; display: grid; place-items: center; opacity: .82;
+}
+.term-kfab:active { opacity: 1; }
+.term-kfab svg { width: 22px; height: 22px; }
+.term-wrap.kb-open .term-kfab { display: none; }
+.term-krows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.term-krow { display: flex; gap: 6px; }
+.term-key {
+  flex: 1 1 0; min-width: 0; height: 44px; border-radius: 10px;
+  background: var(--surface-2); color: var(--fg);
+  border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 13px;
+  display: grid; place-items: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  -webkit-user-select: none; user-select: none;
+}
+.term-key:active { background: var(--surface); }
+.term-key-mod.armed { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.term-key-mod.locked { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 650; }
+.term-kb {
+  flex: 0 0 auto; width: 44px; border-radius: 10px;
+  background: var(--surface-2); color: var(--fg-2);
+  border: 1px solid var(--line);
+  font-size: 20px; display: grid; place-items: center;
+  -webkit-user-select: none; user-select: none;
+}
+.term-kb:active { background: var(--surface); }
+.term-kb svg { width: 20px; height: 20px; }
+
+/* 长按二级字符浮泡 */
+.term-hold {
+  position: fixed; z-index: var(--z-layer);
+  min-width: 40px; height: 40px; padding: 0 12px;
+  background: var(--glass-sheet-fill);
+  -webkit-backdrop-filter: var(--glass-sheet-blur); backdrop-filter: var(--glass-sheet-blur);
+  color: var(--fg); font-family: var(--mono); font-size: 17px;
+  border-radius: 12px; box-shadow: var(--shadow-sheet);
+  display: grid; place-items: center;
+  opacity: 0; transform: translate(-50%, -100%) scale(.9);
+  transition: opacity var(--t-menu) var(--ease-out), transform var(--t-menu) var(--ease-spring);
+}
+.term-hold.show { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+
+/* ══ 平板 ≥600(--bp-phone):附加键条不全宽拉伸,键簇收拢为居中限宽(键盘收起钮仍贴右缘)。 ══ */
+@media (min-width: 600px) {
+  .term-krows { flex: 0 1 680px; margin-left: auto; margin-right: auto; }
+}

@@ -4,4 +4,5 @@
     <string name="title_activity_main">LOFA</string>
     <string name="package_name">cc.colorc.lofa</string>
     <string name="custom_url_scheme">cc.colorc.lofa</string>
+    <string name="accessibility_service_description">允许 LOFA 在你自己的设备上读取当前界面、截图、点击和输入，用于需要人工审核的自动化草稿。</string>
 </resources>

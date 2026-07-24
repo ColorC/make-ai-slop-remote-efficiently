@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LOFA 实机操作台</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;
+    font-family:system-ui,-apple-system,"PingFang SC",sans-serif}
+  #stage{position:absolute;inset:0;overflow:hidden;background:#000}
+  #pz{position:absolute;inset:0;transform-origin:0 0}
+  #mirror{position:absolute;inset:0;width:100%;height:100%;border:0;display:block}
+  #pan{position:absolute;inset:0;z-index:5;cursor:grab;display:none;touch-action:none}
+  #pan.drag{cursor:grabbing}
+  .bar{position:absolute;z-index:10;display:flex;gap:6px;background:#000000b3;border-radius:999px;padding:5px 7px}
+  #res{top:8px;left:50%;transform:translateX(-50%)}
+  #zoom{bottom:10px;right:10px}
+  .bar button{background:#1c2230cc;color:#e6edf3;border:1px solid #3a4456;border-radius:999px;
+    min-width:40px;padding:7px 12px;font-size:13px;font-weight:600;cursor:pointer}
+  .bar button:active{background:#34405a}
+  .bar button:disabled{opacity:.45}
+  #busy{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;
+    background:#0008;color:#cbd5e1;font-size:14px}
+  #busy.on{display:flex}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="pz"><iframe id="mirror" allow="autoplay"></iframe></div>
+  <div id="pan"></div>
+  <div id="busy">切换中…</div>
+</div>
+<div class="bar" id="res">
+  <button data-p="phone">手机</button>
+  <button data-p="tablet">竖平板</button>
+  <button data-p="tablet_land">横平板</button>
+  <button data-p="reset">复位</button>
+</div>
+<div class="bar" id="zoom">
+  <button id="zout">－</button>
+  <button id="zfit">⤢</button>
+  <button id="zin">＋</button>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+const SERIAL = q.get('udid') || q.get('serial') || 'emulator-5554';
+const REMOTE = q.get('remote') || 'tcp:8886';
+// scrcpy 基址: 默认走 8210 反代下的 /lofa/scrcpy/(相对→拼到本页 origin); 也可传绝对地址直连。
+const scrcpyBase = new URL(q.get('scrcpy') || '/lofa/scrcpy/', location.href);
+if (!scrcpyBase.pathname.endsWith('/')) scrcpyBase.pathname += '/';   // 末尾斜杠, 让相对资源(bundle.js)落对
+// /dev/size 端点: 由本页所在路径推出(本页 = <devview基址>/dev/console)
+const sizeUrl = location.pathname.replace(/dev\/console$/, 'dev/size') || '/dev/size';
+
+function buildStream() {
+  const wsproto = scrcpyBase.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsurl = `${wsproto}//${scrcpyBase.host}${scrcpyBase.pathname}?action=proxy-adb&remote=${REMOTE}&udid=${SERIAL}`;
+  return `${scrcpyBase.href}#!action=stream&udid=${SERIAL}&player=webcodecs&ws=${encodeURIComponent(wsurl)}`;
+}
+
+const f = document.getElementById('mirror');
+const pz = document.getElementById('pz');
+const pan = document.getElementById('pan');
+const busy = document.getElementById('busy');
+const stage = document.getElementById('stage');
+const STREAM = buildStream();
+f.src = STREAM;
+
+// ── 缩放 / 平移(1x=操作设备, >1x=拖动平移) ──
+let scale = 1, tx = 0, ty = 0;
+function apply() {
+  pz.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+  pan.style.display = scale > 1.001 ? 'block' : 'none';
+}
+function clampPan() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  tx = Math.min(0, Math.max(w - w * scale, tx));
+  ty = Math.min(0, Math.max(h - h * scale, ty));
+}
+function zoomAt(cx, cy, factor) {
+  const ns = Math.min(5, Math.max(1, scale * factor));
+  if (ns === scale) return;
+  tx = cx - (cx - tx) * (ns / scale);
+  ty = cy - (cy - ty) * (ns / scale);
+  scale = ns;
+  if (scale === 1) { tx = 0; ty = 0; }
+  clampPan(); apply();
+}
+document.getElementById('zin').onclick = () => zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, 1.4);
+document.getElementById('zout').onclick = () => zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, 1 / 1.4);
+document.getElementById('zfit').onclick = () => { scale = 1; tx = 0; ty = 0; apply(); };
+stage.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15); }, { passive: false });
+
+let drag = null;
+pan.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, tx, ty }; pan.classList.add('drag'); pan.setPointerCapture(e.pointerId); });
+pan.addEventListener('pointermove', (e) => { if (!drag) return; tx = drag.tx + (e.clientX - drag.x); ty = drag.ty + (e.clientY - drag.y); clampPan(); apply(); });
+pan.addEventListener('pointerup', () => { drag = null; pan.classList.remove('drag'); });
+pan.addEventListener('pointercancel', () => { drag = null; pan.classList.remove('drag'); });
+
+// ── 分辨率切换 ──
+let switching = false;
+document.querySelectorAll('#res button').forEach((b) => {
+  b.onclick = async () => {
+    if (switching) return;
+    switching = true; busy.classList.add('on');
+    try {
+      await fetch(sizeUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ serial: SERIAL, preset: b.dataset.p }) });
+      scale = 1; tx = 0; ty = 0; apply();
+      f.src = STREAM;   // 切完重连镜像(scrcpy 按新显示尺寸重建编码器)
+    } catch (e) {}
+    f.addEventListener('load', () => { busy.classList.remove('on'); switching = false; }, { once: true });
+    setTimeout(() => { busy.classList.remove('on'); switching = false; }, 4000);
+  };
+});
+</script>
+</body>
+</html>

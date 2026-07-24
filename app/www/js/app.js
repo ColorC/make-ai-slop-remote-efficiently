@@ -1,84 +1,93 @@
-// app.js — LOFA 移动端外壳主入口。
-//   · 连接(健康探测)+ 设置/空态  · 底部 tab 路由(审阅/会话/笔记/项目)
-//   · 顶栏返回/刷新  · OTA 自更新横幅
-// 各 tab 的业务在各自模块;本文件只管壳与路由,是后续功能的共享地基。
+// app.js — 启动外壳:字号/可达性 → 各 view init → 接线 → router.init 四 tab → 连接。
+//   Android 硬件返回按 §4b 优先级;OTA 检测 → toast + 我的红点;remote(B 档)反向控制。
+// 业务在各 view;本文件只管壳、路由接缝与连接。
 
 import {
-  $, toast, connect, normBase, getSaved, save, hostLabel, showView, setBar,
-  curView, isView, doUpdate, DEFAULT_BASE, store,
+  store, connect, normBase, getSaved,
+  initFontScale, initA11yPrefs, setBadgeListener, setUpdateListener,
 } from './core.js'
-import * as review from './reviewView.js'
-import * as chat from './chatView.js'
+import * as router from './router.js'
+import * as sessionsView from './sessionsView.js'
+import * as chatView from './chatView.js'
+import * as termView from './termView.js'
+import * as reviewView from './reviewView.js'
+import * as projectsView from './projectsView.js'
+import * as settingsView from './settingsView.js'
 import * as notes from './notesView.js'
-import * as projects from './projectsView.js'
+import { startRemote } from './remote.js'
 
-let curTab = 'review'
+const TABS = { sessions: 'sessionsView', review: 'reviewView', projects: 'projectsView', me: 'meView' }
 
-// ── tab 路由 ────────────────────────────────────────────────────────────────
-function setTab(m) {
-  curTab = m
-  ;['Review', 'Chat', 'Notes', 'Projects'].forEach((t) => {
-    const el = $('tab' + t); if (el) el.classList.toggle('active', t.toLowerCase() === m)
-  })
-  if (m === 'review') review.loadList()
-  else if (m === 'chat') chat.loadSessions()
-  else if (m === 'notes') notes.loadNotes()
-  else if (m === 'projects') projects.loadProjects()
+// ── 连接成功:渲染我的、加载当前 tab、起 remote ─────────────────────────────
+function onConnected() {
+  settingsView.load()
+  loadTab(router.current() === 'sessionsView' ? 'sessions' : null)
+  startRemote()
+}
+function connectInit() {
+  const saved = getSaved()
+  if (saved) connect(normBase(saved), onConnected, () => { if (!store.base) router.open('connect') })
+  else router.open('connect')   // §7h 首次无地址 → 直接落连接编辑页
 }
 
-// ── 顶栏返回:详情→列表 / 会话→会话列表 ─────────────────────────────────────
-function onBack() {
-  if (isView('convView')) { chat.backToList() }
-  else if (isView('noteDetailView')) { notes.backToList() }
-  else if (isView('projectDetailView')) { projects.backToList() }
-  else if (isView('detailView')) { setBar(hostLabel()); review.loadList() }
+// ── tab 切换驱动数据加载(仅连上后) ─────────────────────────────────────────
+function loadTab(name) {
+  if (!store.base || !name) return
+  if (name === 'sessions') sessionsView.load()
+  else if (name === 'review') reviewView.load()
+  else if (name === 'projects') projectsView.load()
+  else if (name === 'me') settingsView.load()
 }
 
-// ── 顶栏刷新:按当前视图刷新 ─────────────────────────────────────────────────
-function onRefresh() {
-  if (!store.base) { connectInit(); return }
-  if (isView('convView')) chat.refresh()
-  else if (curTab === 'chat') chat.loadSessions()
-  else if (curTab === 'review') review.refresh()
-  else if (curTab === 'notes') notes.refresh()
-  else if (curTab === 'projects') projects.refresh()
-}
-
-// ── 连接成功后默认进审阅 tab ────────────────────────────────────────────────
-function onConnected() { setTab('review') }
-function connectInit() { connect(normBase(getSaved() || DEFAULT_BASE), onConnected) }
-
-// ── 事件接线 ────────────────────────────────────────────────────────────────
-function wire() {
-  $('btnBack').onclick = onBack
-  $('btnRefresh').onclick = onRefresh
-  $('btnSettings').onclick = () => { $('host').value = getSaved() || DEFAULT_BASE; showView('settingsView') }
-  $('btnConnect').onclick = () => {
-    const b = normBase($('host').value)
-    if (!b) { $('setStatus').textContent = '请输入地址'; return }
-    save(b); connect(b, onConnected)
+// ── Android 硬件返回:软键盘 → 浮层 → pop → 非默认 tab 回默认 → 根页最小化 ──
+function onHardwareBack() {
+  const ae = document.activeElement
+  if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT')) { ae.blur(); return }
+  if (!router.back()) {
+    const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App
+    if (A && A.minimizeApp) A.minimizeApp()
   }
-  $('btnRetry').onclick = connectInit
-  $('btnEdit').onclick = () => { $('host').value = getSaved() || DEFAULT_BASE; showView('settingsView') }
-
-  $('tabReview').onclick = () => { if (store.base) setTab('review') }
-  $('tabChat').onclick = () => { if (store.base) setTab('chat') }
-  $('tabNotes').onclick = () => { if (store.base) setTab('notes') }
-  $('tabProjects').onclick = () => { if (store.base) setTab('projects') }
-
-  $('updateBtn').onclick = doUpdate
-  $('updateClose').onclick = () => $('updateBanner').classList.remove('show')
-
-  // 会话 tab 自身的内部事件(composer/stop/工具栏/slash 快捷条)
-  chat.initChat({ onBack: () => { /* barSub 复位由 backToList 内的 loadSessions 处理 */ } })
-
-  // 笔记 tab 自身的静态控件(搜索框/搜索键/写札记按钮)
-  notes.initNotes()
 }
 
 // ── 启动 ────────────────────────────────────────────────────────────────────
-wire()
-connectInit()
+function boot() {
+  initFontScale()
+  initA11yPrefs()
 
-// 暴露给手动调试(可选)
-window.LOFA = { connect: connectInit, setTab }
+  sessionsView.init()
+  chatView.init()
+  termView.init()
+  reviewView.init()
+  projectsView.init()
+  settingsView.init({ onConnected })
+
+  // opener 注册(深链 / 通知点击 / remote.navigate 共用)
+  router.registerOpener('chat', (meta) => { chatView.open(meta); router.push('chatView') })
+  router.registerOpener('term', (meta) => { termView.open(meta); router.push('termView') })
+  router.registerOpener('review-detail', (id) => reviewView.openDetail(id))
+  router.registerOpener('project-detail', (id) => projectsView.openDetail(id))
+  router.registerOpener('notes', () => notes.openNotes())
+  router.registerOpener('code', () => notes.openCode())
+  router.registerOpener('web', (p) => notes.openWeb((p && p.url) || '', (p && p.title) || ''))
+  router.registerOpener('connect', () => settingsView.openConnect())
+  router.registerOpener('session', (id) => { router.tab('sessions'); void id })
+  router.registerOpener('review', (id) => { router.tab('review'); if (id) reviewView.openDetail(id) })
+
+  // 只在停在 tab 根页时加载列表:push 详情/对话/终端(view≠根)不触发重复拉取,pop 回根页再刷。
+  router.onChange(({ tab, view }) => { if (view === TABS[tab]) loadTab(tab) })
+
+  // core 健康/计数/OTA → 底 tab 角标 + 我的红点
+  setBadgeListener(({ review }) => router.setBadge('review', review))
+  setUpdateListener(() => settingsView.load())
+
+  router.init({ tabs: TABS, defaultTab: 'sessions' })
+
+  const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App
+  if (A && A.addListener) { try { A.addListener('backButton', onHardwareBack) } catch (e) {} }
+  if (A && A.getInfo) { try { A.getInfo().then((i) => { window.__lofaVersion = i.version || i.build; settingsView.load() }).catch(() => {}) } catch (e) {} }
+
+  connectInit()
+}
+
+boot()
+window.LOFA = { connect: connectInit, router }

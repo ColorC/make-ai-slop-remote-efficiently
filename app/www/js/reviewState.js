@@ -179,15 +179,26 @@ export function cardFlags(m) {
 }
 
 // ── material kind 归一 + custom_web_template 兜底 ───────────────────────────
-// 网页类: html / custom_web_template 走 iframe;custom_web_template 另出兜底卡。
-// 注: 后端 MaterialKind 枚举无 'live_url'(store.py)—— "实时网页"是 html/custom_web_template
-// 材料在 extra.live_url 里带 URL(routes.py CreateMaterialBody 注释), 不是独立 kind。
+// 网页类与后端/桌面端保持一致: html / custom_web_template / static-report / demo
+// 都走 iframe;custom_web_template 另出兜底卡。
+// 注: 'live_url' 不是 kind,而是材料 extra 中的可选实时地址。
 export function isWebKind(kind) {
-  return kind === 'html' || kind === 'custom_web_template'
+  return kind === 'html' || kind === 'custom_web_template' || kind === 'static-report' || kind === 'demo'
 }
-export function isImageKind(kind) { return kind === 'image' }
+export function isImageKind(kind) { return kind === 'image' || kind === 'aigc-image' }
 export function isVideoKind(kind) { return kind === 'video' }
 export function isKeyQuestionKind(kind) { return kind === 'key_question' }
+// 是否网页材料:明确的网页 kind,或 extra 带 live_url(kind 可能是兼容旧值)。
+export function isWebMaterial(m) {
+  if (!m) return false
+  if (isWebKind(m.kind)) return true
+  const ex = m.extra || {}
+  return !!ex.live_url
+}
+// 正文本身是完整 HTML 文档(应 iframe 渲染, 不能当 markdown 转义成"原文")。
+export function looksLikeHtmlDoc(text) {
+  return /^\s*<(?:!doctype\s+html|html[\s>]|head[\s>]|body[\s>])/i.test(String(text == null ? '' : text))
+}
 
 export function templateName(m) {
   const ex = (m && m.extra) || {}
@@ -195,11 +206,28 @@ export function templateName(m) {
 }
 
 // live_url(同源代理 /xxx 优先)否则 /file。
+// 历史材料可能写死 http://同主机:8210;手机正式入口走 12443 时直接使用会触发
+// 混合内容/防火墙问题,因此将同主机的旧 8210 或 https→http 地址归一到当前 base origin。
 export function resolveWebUrl(m, base) {
   base = base || ''
   const ex = (m && m.extra) || {}
-  const lu = ex.live_url
-  if (lu) return lu.charAt(0) === '/' ? (base + lu) : lu
+  const lu = String(ex.live_url || '').trim()
+  if (lu) {
+    if (lu.charAt(0) === '/' && lu.slice(0, 2) !== '//') return base + lu
+    try {
+      const baseUrl = new URL(base)
+      const liveUrl = new URL(lu, baseUrl)
+      const sameHost = liveUrl.hostname.toLowerCase() === baseUrl.hostname.toLowerCase()
+      const legacyGateway = liveUrl.port === '8210'
+      const insecureDowngrade = baseUrl.protocol === 'https:' && liveUrl.protocol === 'http:'
+      if (sameHost && (legacyGateway || insecureDowngrade)) {
+        return baseUrl.origin + liveUrl.pathname + liveUrl.search + liveUrl.hash
+      }
+      return liveUrl.href
+    } catch (e) {
+      // 无法解析的旧脏值不应破坏审阅页;文件路由仍是可审阅的权威兜底。
+    }
+  }
   return base + filePath(m && m.id)
 }
 

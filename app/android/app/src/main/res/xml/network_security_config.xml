@@ -9,6 +9,8 @@
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
+            <!-- 内置 Caddy 本地 CA(codeweb HTTPS :12443): WebView 默认不信任用户装的 CA, 故打进 APK 自带信任 -->
+            <certificates src="@raw/codeweb_ca" />
         </trust-anchors>
     </base-config>
 </network-security-config>

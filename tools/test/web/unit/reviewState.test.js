@@ -11,7 +11,8 @@ import {
   SELECTION_INIT, selectionReducer, selHas, selCount, selIds,
   buildVerdictPayload, buildBatchVerdictPayload, buildBatchDeletePayload, buildCommentPayload, buildArchivePayload,
   summarizeBatch, statsBadges, cardFlags,
-  isWebKind, isImageKind, isVideoKind, isKeyQuestionKind, templateName, resolveWebUrl, templateFallbackCard,
+  isWebKind, isWebMaterial, looksLikeHtmlDoc, isImageKind, isVideoKind, isKeyQuestionKind,
+  templateName, resolveWebUrl, templateFallbackCard,
   normAnchor, anchorToTarget, normAnnotation, extractAnnotations, imageAnnotations, markdownAnnotations, plainComments,
   clamp01, clampPositiveInt, imageAnchorToScreen, clampLine, buildMarkdownLines, firstAnnotatedLine,
   isReviewEvent, reviewEventType, reviewEventId, REVIEW_EVENTS, parseKeyQuestion,
@@ -197,15 +198,25 @@ describe('卡片角标 cardFlags(后端真字段 pushed_to_user + status)', () =
 })
 
 describe('material kind 判别 + custom_web_template 兜底', () => {
-  it('网页类: html / custom_web_template(后端无 live_url kind, 那是 extra)', () => {
+  it('网页类与后端/桌面端一致: html / custom_web_template / static-report / demo', () => {
     expect(isWebKind('html')).toBe(true)
     expect(isWebKind('custom_web_template')).toBe(true)
+    expect(isWebKind('static-report')).toBe(true)
+    expect(isWebKind('demo')).toBe(true)
     expect(isWebKind('live_url')).toBe(false)   // 后端 MaterialKind 枚举无此 kind
     expect(isWebKind('image')).toBe(false)
     expect(isImageKind('image')).toBe(true)
+    expect(isImageKind('aigc-image')).toBe(true)
     expect(isVideoKind('video')).toBe(true)
     expect(isKeyQuestionKind('key_question')).toBe(true)
     expect(isKeyQuestionKind('markdown')).toBe(false)
+  })
+  it('extra.live_url 与完整 HTML 正文可识别为网页材料', () => {
+    expect(isWebMaterial({ kind: 'legacy', extra: { live_url: '/live/x' } })).toBe(true)
+    expect(isWebMaterial({ kind: 'markdown', extra: {} })).toBe(false)
+    expect(looksLikeHtmlDoc('<!doctype html><html></html>')).toBe(true)
+    expect(looksLikeHtmlDoc('  <body>legacy</body>')).toBe(true)
+    expect(looksLikeHtmlDoc('# Markdown')).toBe(false)
   })
   it('templateName 从 template / extra.template / extra.template_name 取', () => {
     expect(templateName({ extra: { template: 'filetree_diff' } })).toBe('filetree_diff')
@@ -216,6 +227,11 @@ describe('material kind 判别 + custom_web_template 兜底', () => {
     expect(resolveWebUrl({ id: 'm1', extra: { live_url: '/live/x' } }, 'http://h')).toBe('http://h/live/x')
     expect(resolveWebUrl({ id: 'm1', extra: { live_url: 'http://ext/y' } }, 'http://h')).toBe('http://ext/y')
     expect(resolveWebUrl({ id: 'm1', extra: {} }, 'http://h')).toBe('http://h/api/boss-sight/reviewstage/m1/file')
+  })
+  it('resolveWebUrl:同主机旧 8210/http 地址归一到当前正式网关', () => {
+    const m = { id: 'm1', extra: { live_url: 'http://10.3.43.246:8210/report/x.html?q=1' } }
+    expect(resolveWebUrl(m, 'https://10.3.43.246:12443'))
+      .toBe('https://10.3.43.246:12443/report/x.html?q=1')
   })
   it('templateFallbackCard: 标题/模板/说明/原始字段/链接, 跳过已知键, 空白也不崩', () => {
     const card = templateFallbackCard({
