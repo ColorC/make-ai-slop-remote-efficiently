@@ -11,6 +11,17 @@ export const DEFAULT_BASE = 'https://10.3.43.246:12443'   // 唯一对外端口(
 
 // 连接态单例。code = 主机 /lofa-config.json 下发的代码面板配置。update = OTA 待装清单。
 export const store = { base: null, code: null, update: null }
+let _connectionState = 'idle'
+let _probePromise = null
+
+export function connectionTrying() { _connectionState = 'connecting'; banner('connecting') }
+export function connectionAlive(announce) {
+  const recover = _connectionState === 'disconnected' || _connectionState === 'connecting'
+  _connectionState = 'connected'
+  if (announce || recover) banner('connected')
+  else banner(null)
+}
+export function connectionLost() { _connectionState = 'disconnected'; banner('disconnected') }
 
 export const $ = (id) => document.getElementById(id)
 export function esc(s) {
@@ -98,6 +109,7 @@ export async function api(path, opts) {
     try { const j = await r.json(); detail = j.detail || '' } catch (e) {}
     throw new Error(detail || ('HTTP ' + r.status))
   }
+  connectionAlive(false)
   const ct = r.headers.get('content-type') || ''
   return ct.indexOf('application/json') >= 0 ? r.json() : r.text()
 }
@@ -279,26 +291,54 @@ export async function doUpdate() {
   } catch (e) { toast('更新失败: ' + (e.message || e)); LOG.rec('error', ['update.fail', e.message || e]) }
 }
 
-// ── 连接(健康探测) ──────────────────────────────────────────────────────────
-// connect(base, onOk?, onFail?):成功 → banner 绿一闪 + onOk;失败 → banner 红 + onFail(msg)。
-// 不再直接切视图(导航交给 app.js/router)。
+// Connection health check and foreground recovery.
+async function healthCheck(base) {
+  const ctrl = new AbortController()
+  const to = setTimeout(() => ctrl.abort(), 6000)
+  try {
+    const r = await fetch(base + '/api/healthz', { signal: ctrl.signal, cache: 'no-store' })
+    if (!r.ok) throw new Error('HTTP ' + r.status)
+    const j = await r.json()
+    if (!j.ok) throw new Error('healthz not ok')
+    return j
+  } finally { clearTimeout(to) }
+}
+
+// Foreground probes never navigate and never duplicate polling setup.
+export function probeConnection(base) {
+  base = base || store.base
+  if (!base) return Promise.resolve(false)
+  if (_probePromise) return _probePromise
+  connectionTrying()
+  _probePromise = healthCheck(base).then(() => {
+    store.base = base
+    connectionAlive(true)
+    LOG.rec('info', ['connect.recovered', base])
+    return true
+  }).catch((e) => {
+    connectionLost()
+    LOG.rec('error', ['connect.probe.fail', base, e.message || e])
+    return false
+  }).finally(() => { _probePromise = null })
+  return _probePromise
+}
+
 export async function connect(base, onOk, onFail) {
-  banner('connecting')
+  connectionTrying()
   LOG.rec('info', ['connect.try', base])
   try {
-    const ctrl = new AbortController(), to = setTimeout(() => ctrl.abort(), 6000)
-    const r = await fetch(base + '/api/healthz', { signal: ctrl.signal, cache: 'no-store' }); clearTimeout(to)
-    if (!r.ok) throw new Error('HTTP ' + r.status)
-    const j = await r.json(); if (!j.ok) throw new Error('healthz not ok')
-    store.base = base; banner('connected')
+    await healthCheck(base)
+    store.base = base; connectionAlive(true)
     LOG.rec('info', ['connect.ok', base]); LOG.flush()
     fetch(base + '/api/android/register', { method: 'POST' }).catch(() => {})
     NOTIF.init(); startPolling(); checkUpdate()
     if (onOk) onOk()
     fetchCodeConfig()
   } catch (e) {
-    banner('disconnected')
-    const msg = (e.name === 'AbortError') ? '超时(6s) — 网络不通/防火墙/未开局域网绑定' : String(e.message || e)
+    connectionLost()
+    const msg = (e.name === 'AbortError')
+      ? '超时(6s) — 网络不通/防火墙/未开局域网绑定'
+      : String(e.message || e)
     LOG.rec('error', ['connect.fail', base, msg]); LOG.flush()
     if (onFail) onFail(msg)
   }

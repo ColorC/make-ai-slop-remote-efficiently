@@ -377,7 +377,8 @@ function openRow(r) {
   if (r.status === 'recoverable') return resumeRow(r)
   if (r.kind === 'chat') {
     const m = r.meta
-    router.open('chat', { id: m.id, name: r.title, provider: m.provider, effort: m.effort, model: m.model, active_plan: m.active_plan })
+    const hint = r.titleWeak ? cachedTitle(r.id) : rowTitle(r)
+    router.open('chat', { id: m.id, name: m.name, titleHint: hint, provider: m.provider, effort: m.effort, model: m.model, active_plan: m.active_plan, message_count: m.message_count })
   } else {
     router.open('term', r.meta)
   }

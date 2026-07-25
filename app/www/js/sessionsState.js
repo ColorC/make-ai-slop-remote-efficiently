@@ -82,21 +82,44 @@ export function isDefaultName(name) {
 // 可读标题(优先级 §11a):用户改过的名 > digest 一句话中文主题 >
 // preview(首条用户输入,clip 48) > last_user/last_did 摘录(clip 36) >
 // 默认机器名去掉相同前缀(留 工作区 · 日期) > provider 兜底。
-function clip(s, n) {
+export function clipSessionTitle(s, n = 48) {
   const t = String(s || '').replace(/\s+/g, ' ').trim()
   return t.length > n ? t.slice(0, n) + '…' : t
 }
-function chatTitle(m, hit) {
-  const name = (m.name || '').trim()
+
+// 没有内容标题时也必须有可区分标识:来源 + 会话 id 尾号。
+export function chatIdentityTitle(m) {
+  const base = providerLabel(m && m.provider) + ' 会话'
+  const id = String((m && m.id) || '').trim()
+  return id ? base + ' · ' + id.slice(-6) : base
+}
+
+// 对话页顶栏标题:人工名 > 已知主题/缓存 > 首条用户消息 > 机器名简化 > 唯一标识。
+export function resolveChatHeaderTitle(m, firstUserText, titleHint) {
+  const name = String((m && m.name) || '').trim()
   if (name && !isDefaultName(name)) return name
-  if (hit && hit.title) return hit.title
-  if (hit && hit.preview) return clip(hit.preview, 48)
-  if (hit && hit.hint) return clip(hit.hint, 36)
+  const hinted = clipSessionTitle(titleHint, 48)
+  if (hinted) return hinted
+  const temporary = clipSessionTitle(firstUserText, 48)
+  if (temporary) return temporary
   if (name && name !== '未命名智能体对话') {
     const parts = name.split(' · ')
     if (parts.length >= 3) return parts.slice(1).join(' · ')
   }
-  return providerLabel(m.provider) + ' 会话'
+  return chatIdentityTitle(m)
+}
+
+function chatTitle(m, hit) {
+  const name = (m.name || '').trim()
+  if (name && !isDefaultName(name)) return name
+  if (hit && hit.title) return hit.title
+  if (hit && hit.preview) return clipSessionTitle(hit.preview, 48)
+  if (hit && hit.hint) return clipSessionTitle(hit.hint, 36)
+  if (name && name !== '未命名智能体对话') {
+    const parts = name.split(' · ')
+    if (parts.length >= 3) return parts.slice(1).join(' · ')
+  }
+  return chatIdentityTitle(m)
 }
 
 // chat meta + 四态 → 统一状态。running=产出中;waiting=活着但闲置(等用户);ended=已结束。

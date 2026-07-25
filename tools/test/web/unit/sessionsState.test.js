@@ -118,7 +118,7 @@ describe('normalizeSessions — chat 四态归一', () => {
     const [named] = normalizeSessions([{ ...base, id: 'c8', name: '我的任务', alive: true }], [], {})
     const [blank] = normalizeSessions([{ ...base, id: 'c9', name: '  ', alive: true }], [], {})
     expect(named.title).toBe('我的任务')
-    expect(blank.title).toBe('Claude 会话')
+    expect(blank.title).toBe('Claude 会话 · c9')
   })
 })
 

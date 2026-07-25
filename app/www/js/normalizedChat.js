@@ -267,33 +267,140 @@ export function applyFrame(state, f) {
   }
 }
 
-// ── snapshot: 清空并据它重建(重连去重的核心) ────────────────────────────────
+// Apply a snapshot into a temporary state, then replace atomically after validation.
+
+function _replaceState(target, source) {
+  target.sessionId = source.sessionId
+  target.items = source.items
+  target._byId = source._byId
+  target._toolByToolId = source._toolByToolId
+  target.streamingId = source.streamingId
+  target.running = source.running
+  target.aborted = source.aborted
+  target.status = source.status
+  target.tokenBudget = source.tokenBudget
+  target.seq = source.seq
+  return target
+}
+
+function _itemKey(item) {
+  if (!item) return ''
+  if (item.type === 'tool' && item.toolId) return 'tool:' + item.toolId
+  if (item.type === 'context') return 'context:' + String(item.summary || '') + ':' + String(item.planId || '')
+  if (item.type === 'tool') return 'tool:' + String(item.toolName || '') + ':' + safeJson(item.input) + ':' + String(item.result || '')
+  return String(item.type || '') + ':' + String(item.text || '')
+}
+
+function _mergePartialSnapshot(state, next) {
+  // Match by stable server id first. Legacy snapshots may not carry ids, so use
+  // occurrence counts rather than a Set; repeated identical prompts are valid.
+  const semanticCounts = new Map()
+  const takeSemantic = (key) => {
+    if (!key) return false
+    const count = semanticCounts.get(key) || 0
+    if (!count) return false
+    if (count === 1) semanticCounts.delete(key)
+    else semanticCounts.set(key, count - 1)
+    return true
+  }
+  for (const item of state.items) {
+    const key = _itemKey(item)
+    if (key) semanticCounts.set(key, (semanticCounts.get(key) || 0) + 1)
+  }
+  for (const item of next.items) {
+    const existing = state._byId[item.id]
+    if (existing) {
+      takeSemantic(_itemKey(existing))
+      Object.assign(existing, item)
+      if (existing.type === 'tool' && existing.toolId) state._toolByToolId[existing.toolId] = existing
+      continue
+    }
+    const key = _itemKey(item)
+    if (takeSemantic(key)) continue
+    const added = _put(state, Object.assign({}, item))
+    if (added.type === 'tool' && added.toolId) state._toolByToolId[added.toolId] = added
+  }
+  state.running = next.running
+  state.aborted = next.aborted
+  state.status = next.status
+  state.tokenBudget = next.tokenBudget
+  state.seq = Math.max(state.seq, next.seq)
+  if (next.streamingId && state._byId[next.streamingId]) state.streamingId = next.streamingId
+  else if (!next.running) state.streamingId = null
+  return state
+}
 
 export function applySnapshot(state, snap) {
-  // 1) 彻底清空旧列表与配对索引, 复位运行态(不卡在"运行中")
-  state.items.length = 0
-  state._byId = Object.create(null)
-  state._toolByToolId = Object.create(null)
-  state.streamingId = null
-  state.running = false
-  state.aborted = false
-  state.status = null
+  snap = snap || {}
+  const messages = Array.isArray(snap.messages) ? snap.messages : []
+  const history = Array.isArray(snap.history) ? snap.history : []
+  const hasRecords = messages.length > 0 || history.length > 0
 
-  if (snap && snap.tokenUsage) state.tokenBudget = snap.tokenUsage
-
-  // 2) 优先用 messages(完整归一化事件), 退回 history([{role,text}])
-  const messages = (snap && Array.isArray(snap.messages) && snap.messages.length) ? snap.messages : null
-  if (messages) {
-    for (const m of messages) _ingest(state, m)
+  // Do not let an empty or partial snapshot erase history already visible to the user.
+  // Status-only snapshots still update runtime state without replacing the item list.
+  if (!hasRecords && state.items.length) {
+    if (snap.tokenUsage) state.tokenBudget = snap.tokenUsage
     return state
   }
-  const history = (snap && Array.isArray(snap.history)) ? snap.history : []
-  for (const h of history) {
-    const text = String(h.text || '')
-    if (!text.trim()) continue
-    _ingest(state, { kind: 'text', role: h.role === 'user' ? 'user' : 'assistant', content: text })
+
+  const next = createChatState(state.sessionId)
+  next.seq = state.seq
+  next.tokenBudget = snap.tokenUsage || state.tokenBudget
+
+  // Prefer normalized messages when present, otherwise consume legacy history entries.
+  if (messages.length) {
+    for (const m of messages) _ingest(next, m)
+  } else {
+    for (const h of history) {
+      const text = String(h.text != null ? h.text : (h.content != null ? h.content : ''))
+      if (!text.trim()) continue
+      _ingest(next, {
+        id: h.id,
+        kind: h.kind || 'text',
+        role: h.role === 'user' ? 'user' : 'assistant',
+        content: text,
+      })
+    }
   }
-  return state
+
+  // Preserve local user messages that the server has not echoed yet.
+  // Deduplicate preserved local messages against user text already in server history.
+  const serverUserTextCounts = new Map()
+  for (const item of next.items) {
+    if (item.type !== 'user') continue
+    const text = String(item.text || '')
+    serverUserTextCounts.set(text, (serverUserTextCounts.get(text) || 0) + 1)
+  }
+  for (const item of state.items) {
+    if (item.type !== 'user' || String(item.id || '').indexOf('local_user_') !== 0) continue
+    const text = String(item.text || '')
+    const echoed = serverUserTextCounts.get(text) || 0
+    if (echoed > 0) {
+      if (echoed === 1) serverUserTextCounts.delete(text)
+      else serverUserTextCounts.set(text, echoed - 1)
+      continue
+    }
+    _put(next, Object.assign({}, item))
+  }
+
+  // HTTP fallback may preserve a live streaming item and runtime status.
+  if (snap.preserveLiveState && state.running) {
+    next.running = true
+    next.status = state.status
+    next.aborted = state.aborted
+    const live = state.streamingId && state._byId[state.streamingId]
+    if (live && !next._byId[live.id]) {
+      _put(next, Object.assign({}, live))
+      next.streamingId = live.id
+    }
+  }
+
+  // Chat history is append-only in the UI. If a reconnect sends a shorter snapshot,
+  // merge its new records into the complete visible history instead of shrinking it.
+  if (snap.preserveExistingHistory && state.items.length > next.items.length) {
+    return _mergePartialSnapshot(state, next)
+  }
+  return _replaceState(state, next)
 }
 
 // ── 用户本地回显(发送即上屏, 并进入"运行中") ────────────────────────────────

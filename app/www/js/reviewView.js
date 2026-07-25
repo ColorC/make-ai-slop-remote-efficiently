@@ -112,6 +112,8 @@ let _refreshTimer = null
 let annotateMode = false
 let selectBtnEl = null
 let immersive = false
+let detailGeneration = 0
+let detailAbort = null
 let _segCtl = null
 let _tocHeads = []
 const ICON_IMMERSIVE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>'
@@ -122,6 +124,12 @@ const ICON_IMMERSIVE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 //   第三行 tier 图例(强制 N/重要 N,真实计数)。整个头部放进滚动容器顶部,随列表一起滚走(反馈 1)。
 export function init() {
   const v = document.getElementById('reviewView'); v.innerHTML = ''
+  router.onChange(({ view }) => { if (view !== 'reviewDetailView') exitImmersive() })
+  document.addEventListener('fullscreenchange', () => {
+    const detail = document.getElementById('reviewDetailView')
+    if (immersive && document.fullscreenElement !== detail) setImmersive(false, true)
+  })
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') exitImmersive() })
   sel = S.SELECTION_INIT
   const scroll = document.createElement('div'); scroll.className = 'scroll'
   const head = document.createElement('div'); head.className = 'rv-head'; head.id = 'reviewHead'
@@ -439,73 +447,76 @@ function reportBatch(resp, ids, label) {
 // ── 详情推入页 ────────────────────────────────────────────────────────────────
 export async function openDetail(id) {
   ensureWs()
+  const gen = ++detailGeneration
+  if (detailAbort) { try { detailAbort.abort() } catch (e) {} }
+  const ctrl = new AbortController(); detailAbort = ctrl
   buildDetailShell()
   router.push('reviewDetailView')
   const body = document.getElementById('reviewDetailBody')
   if (body) body.innerHTML = '<div class="rv-loading">加载中…</div>'
   try {
-    const m = await api(S.detailPath(id))
+    const m = await api(S.detailPath(id), { signal: ctrl.signal })
+    if (gen !== detailGeneration || ctrl.signal.aborted) return
     curMaterial = m
     renderDetail(m)
   } catch (e) {
+    if (gen !== detailGeneration || ctrl.signal.aborted) return
     if (body) body.innerHTML = '<div class="rv-error">加载失败: ' + esc(e.message) + '</div>'
     LOG.rec('error', ['review.detail.fail', id, e.message])
+  } finally {
+    if (detailAbort === ctrl) detailAbort = null
   }
 }
 function buildDetailShell() {
+  exitImmersive()
   const v = document.getElementById('reviewDetailView'); if (!v) return
-  immersive = false
   v.classList.remove('rv-immersive', 'rv-content-first', 'rv-web-detail', 'rv-markdown-detail')
   v.innerHTML =
     '<div class="lg-nav">' +
-    '<button class="lg-nav-back" aria-label="返回">' + icons.back + '</button>' +
-    '<div class="lg-nav-mid"><div class="lg-nav-title" id="reviewDetailTitle">审阅详情</div></div>' +
+    '<button class="lg-nav-back" aria-label="Back">' + icons.back + '</button>' +
+    '<div class="lg-nav-mid"><div class="lg-nav-title" id="reviewDetailTitle"></div></div>' +
     '<div class="lg-nav-actions">' +
-    '<button class="lg-icon-btn" id="reviewToc" aria-label="目录" style="display:none">' + icons.list + '</button>' +
-    '<button class="lg-icon-btn" id="reviewImmersive" aria-label="沉浸">' + ICON_IMMERSIVE + '</button>' +
-    '<button class="lg-icon-btn" id="reviewDetailMore" aria-label="更多">' + icons.dots + '</button></div>' +
+    '<button class="lg-icon-btn" id="reviewToc" aria-label="Contents" style="display:none">' + icons.list + '</button>' +
+    '<button class="lg-icon-btn" id="reviewImmersive" aria-label="Fullscreen">' + ICON_IMMERSIVE + '</button>' +
+    '<button class="lg-icon-btn" id="reviewDetailMore" aria-label="More">' + icons.dots + '</button></div>' +
     '</div>' +
     '<div class="scroll rv-detail-scroll" id="reviewDetailScroll"><div class="rv-d-main" id="reviewDetailBody"></div></div>' +
-    '<div class="rv-detail-bar" id="reviewDetailBar"></div>' +
-    '<button class="rv-chrome-handle" id="reviewChromeHandle" aria-label="显示审阅工具">' + ICON_IMMERSIVE + '</button>'
+    '<div class="rv-detail-bar" id="reviewDetailBar"></div>'
   v.querySelector('.lg-nav-back').addEventListener('click', () => router.pop())
   v.querySelector('#reviewToc').addEventListener('click', (e) => { e.stopPropagation(); toggleTocPop() })
   v.querySelector('#reviewImmersive').addEventListener('click', () => setImmersive(!immersive))
   v.querySelector('#reviewDetailMore').addEventListener('click', (e) => openDetailMenu(e.currentTarget))
-  v.querySelector('#reviewChromeHandle').addEventListener('click', () => setImmersive(false))
-  bindImmersiveScroll(v.querySelector('#reviewDetailScroll'))
 }
 
-// ── 沉浸阅读(§11b):正文向下滚隐藏顶栏/底操作条,向上滚或点正文空白召回 ──────
-// iframe 材料滚动事件在 iframe 内不冒泡到父,靠顶栏「沉浸」钮手动切;chrome 隐藏时操作条不可点。
-function setImmersive(on) {
+function setImmersive(on, skipFullscreenApi) {
   immersive = !!on
   const v = document.getElementById('reviewDetailView'); if (!v) return
   v.classList.toggle('rv-immersive', immersive)
+  document.body.classList.toggle('review-immersive-active', immersive)
   const btn = v.querySelector('#reviewImmersive'); if (btn) btn.classList.toggle('on', immersive)
   closeTocPop()
+  if (skipFullscreenApi) return
+  if (immersive) {
+    if (!document.fullscreenElement && v.requestFullscreen) {
+      try { const p = v.requestFullscreen(); if (p && p.catch) p.catch(() => {}) } catch (e) {}
+    }
+  } else if (document.fullscreenElement && document.exitFullscreen) {
+    try { const p = document.exitFullscreen(); if (p && p.catch) p.catch(() => {}) } catch (e) {}
+  }
 }
-function bindImmersiveScroll(scrollEl) {
-  if (!scrollEl) return
-  let last = 0
-  scrollEl.addEventListener('scroll', () => {
-    const y = scrollEl.scrollTop
-    if (y > last + 8 && y > 48) setImmersive(true)
-    else if (y < last - 8) setImmersive(false)
-    last = y
-  }, { passive: true })
-  scrollEl.addEventListener('click', (e) => {
-    if (!immersive) return
-    if (e.target.closest('a, button, .rv-anno-rect, .rv-anno-pt')) return
-    setImmersive(false)
-  })
+
+export function exitImmersive() {
+  if (!immersive && !document.body.classList.contains('review-immersive-active')) return false
+  setImmersive(false)
+  return true
 }
+
 function renderDetail(m) {
   const titleEl = document.getElementById('reviewDetailTitle'); if (titleEl) titleEl.textContent = m.title || '(无标题)'
   const body = document.getElementById('reviewDetailBody'); if (!body) return
   const view = document.getElementById('reviewDetailView')
   const web = S.isWebMaterial(m)
-  const markdown = m.kind === 'markdown'
+  const markdown = S.normalizeMaterialKind(m.kind) === 'markdown'
   const contentFirst = web || markdown
   if (view) {
     view.classList.toggle('rv-content-first', contentFirst)
@@ -532,7 +543,7 @@ function renderDetail(m) {
   renderComments(document.getElementById('rvComments'), m)
   renderDetailBar(m.id)
   // 网页/Markdown 默认把内容铺满;右上角悬浮手柄可随时召回标题和裁决操作。
-  setImmersive(contentFirst)
+  setImmersive(false)
 }
 // 邮票格(待审/搁置)与裁决章(通过/驳回)互斥承载 tier·状态(非纯装饰)。
 function postageHtml(m) {
@@ -629,6 +640,13 @@ function openDetailMenu(anchor) {
   openMenu({
     anchor,
     items: [
+      ...(S.isWebMaterial(m) ? [
+        { label: '通过', onTap: () => doVerdict(m.id, 'accepted') },
+        { label: '搁置', onTap: () => doVerdict(m.id, 'blocked') },
+        { label: '驳回', danger: true, onTap: () => doVerdict(m.id, 'rejected') },
+        { label: '评论', onTap: () => addComment(m.id, null) },
+        { label: '在浏览器打开', onTap: () => openWebExternal(m) },
+      ] : []),
       { label: archived ? '取消归档' : '归档', onTap: () => doArchive(m.id, !archived) },
       { label: '复制链接', onTap: () => doCopyLink(m) },
     ],
@@ -642,6 +660,11 @@ async function doArchive(id, archived) {
     LOG.rec('info', ['review.archive', id, archived])
   } catch (e) { toast('操作失败: ' + e.message); LOG.rec('error', ['review.archive.fail', id, e.message]) }
 }
+function openWebExternal(m) {
+  const url = S.resolveWebUrl(m, store.base)
+  try { window.open(url, '_blank', 'noopener,noreferrer') } catch (e) {}
+}
+
 async function doCopyLink(m) {
   const url = S.resolveWebUrl(m, store.base)
   try {
@@ -758,25 +781,17 @@ async function renderMarkdown(c, m) {
 }
 // 网页材料: html / live_url → iframe; custom_web_template → iframe + 通用兜底卡。
 function renderWeb(c, m) {
+  const view = document.getElementById('reviewDetailView')
+  if (view) {
+    view.classList.add('rv-content-first', 'rv-web-detail')
+    view.classList.remove('rv-markdown-detail')
+  }
   c.className = 'rv-web'
   const url = S.resolveWebUrl(m, store.base)
-  let html =
-    '<iframe src="' + url + '" referrerpolicy="no-referrer" ' +
-    'sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals"></iframe>' +
-    '<div class="rv-web-bar"><a href="' + url + '" target="_blank" rel="noreferrer">↗ 在浏览器打开</a></div>'
-  if (m.kind === 'custom_web_template') {
-    const card = S.templateFallbackCard(m, store.base)
-    html =
-      '<div class="rv-tpl">' +
-      '<div class="rv-tpl-h">模板: ' + esc(card.template || '(通用)') + '</div>' +
-      (card.description ? '<div class="rv-tpl-desc">' + esc(card.description) + '</div>' : '') +
-      (card.fields.length
-        ? '<div class="rv-tpl-fields">' + card.fields.map((f) =>
-          '<div class="rv-tpl-f"><span class="k">' + esc(f.key) + '</span><span class="v">' + esc(f.value) + '</span></div>').join('') + '</div>'
-        : '') +
-      '</div>' + html
-  }
-  c.innerHTML = html
+  c.innerHTML = '<iframe referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin allow-popups allow-forms allow-modals"></iframe>'
+  const frame = c.querySelector('iframe')
+  if (S.looksLikeHtmlDoc(m.inline_content)) frame.srcdoc = String(m.inline_content)
+  else frame.src = url
 }
 // 评论(无锚点的普通评论)
 function renderComments(box, m) {
@@ -847,4 +862,5 @@ function onReviewFrame(f) {
     _refreshTimer = setTimeout(() => { _refreshTimer = null; if (!sel.mode) loadList() }, 400)
   }
 }
+export function reconnectNow() { return conn ? conn.reconnectNow() : false }
 export function leaveWs() { if (conn) { try { conn.leave() } catch (e) {} conn = null } }

@@ -79,6 +79,11 @@ function teardown() {
   try { if (c.term) c.term.dispose() } catch (e) {}
 }
 
+export function reconnectNow() {
+  if (!cur || !cur.ws) return false
+  return cur.ws.reconnectNow()
+}
+
 export function open(meta) {
   meta = meta || {}
   teardown()

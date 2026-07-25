@@ -213,6 +213,9 @@ describe('material kind 判别 + custom_web_template 兜底', () => {
   })
   it('extra.live_url 与完整 HTML 正文可识别为网页材料', () => {
     expect(isWebMaterial({ kind: 'legacy', extra: { live_url: '/live/x' } })).toBe(true)
+    expect(isWebMaterial({ kind: 'legacy', content_type: 'text/html; charset=utf-8' })).toBe(true)
+    expect(isWebMaterial({ kind: 'legacy', mime_type: 'application/xhtml+xml' })).toBe(true)
+    expect(isWebMaterial({ kind: 'legacy', file_relpath: 'reports/demo.html?rev=2' })).toBe(true)
     expect(isWebMaterial({ kind: 'markdown', extra: {} })).toBe(false)
     expect(looksLikeHtmlDoc('<!doctype html><html></html>')).toBe(true)
     expect(looksLikeHtmlDoc('  <body>legacy</body>')).toBe(true)

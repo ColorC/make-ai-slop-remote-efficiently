@@ -3,7 +3,7 @@
 // 业务在各 view;本文件只管壳、路由接缝与连接。
 
 import {
-  store, connect, normBase, getSaved,
+  store, connect, probeConnection, normBase, getSaved,
   initFontScale, initA11yPrefs, setBadgeListener, setUpdateListener,
 } from './core.js'
 import * as router from './router.js'
@@ -31,6 +31,18 @@ function connectInit() {
   else router.open('connect')   // §7h 首次无地址 → 直接落连接编辑页
 }
 
+let resumeTimer = null
+function resumeConnections() {
+  if (resumeTimer) clearTimeout(resumeTimer)
+  resumeTimer = setTimeout(() => {
+    resumeTimer = null
+    if (store.base) probeConnection(store.base)
+    chatView.reconnectNow()
+    termView.reconnectNow()
+    reviewView.reconnectNow()
+  }, 120)
+}
+
 // ── tab 切换驱动数据加载(仅连上后) ─────────────────────────────────────────
 function loadTab(name) {
   if (!store.base || !name) return
@@ -42,6 +54,7 @@ function loadTab(name) {
 
 // ── Android 硬件返回:软键盘 → 浮层 → pop → 非默认 tab 回默认 → 根页最小化 ──
 function onHardwareBack() {
+  if (reviewView.exitImmersive && reviewView.exitImmersive()) return
   const ae = document.activeElement
   if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT')) { ae.blur(); return }
   if (!router.back()) {
@@ -86,7 +99,13 @@ function boot() {
   router.init({ tabs: TABS, defaultTab: 'sessions' })
 
   const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App
-  if (A && A.addListener) { try { A.addListener('backButton', onHardwareBack) } catch (e) {} }
+  if (A && A.addListener) {
+    try { A.addListener('backButton', onHardwareBack) } catch (e) {}
+    try { A.addListener('appStateChange', (state) => { if (state && state.isActive) resumeConnections() }) } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resumeConnections() })
+  window.addEventListener('pageshow', resumeConnections)
+  window.addEventListener('online', resumeConnections)
   if (A && A.getInfo) { try { A.getInfo().then((i) => { window.__lofaVersion = i.version || i.build; settingsView.load() }).catch(() => {}) } catch (e) {} }
 
   connectInit()

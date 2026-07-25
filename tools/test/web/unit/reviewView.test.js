@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+﻿// @vitest-environment jsdom
 // reviewView UI 状态单测 — 真实驱动控制器(DOM + 拦截 fetch + 假 WebSocket
 // + 真实 router/ui),锁住新形态下的行为(对齐 UI-REDESIGN-V2 §7e/§11c):
 //   · 时间桶分组列表渲染 + 分段(待审/已处理/全部)+ 「筛选」sheet(层级单选/含已归档/清除)
@@ -303,13 +303,10 @@ describe('详情推入页: 6 类 material 渲染', () => {
 
   it('custom_web_template: 兜底卡(标题/模板/说明/字段/链接) + iframe, 不空白', async () => {
     await review.openDetail('m-tpl')
-    await vi.waitFor(() => expect($('.rv-tpl')).toBeTruthy())
-    const card = $('.rv-tpl').textContent
-    expect(card).toContain('filetree_diff')
-    expect(card).toContain('改了 3 个文件')
-    expect(card).toContain('files')
-    expect($('.rv-web iframe')).toBeTruthy()
-    expect($('.rv-web-bar a').getAttribute('href')).toBe('http://test/live/m-tpl')
+    await vi.waitFor(() => expect($('.rv-web iframe')).toBeTruthy())
+    expect($('.rv-tpl')).toBeNull()
+    expect($('.rv-web-bar')).toBeNull()
+    expect($('.rv-web iframe').getAttribute('src')).toBe('http://test/live/m-tpl')
   })
 
   it('html(live_url): iframe 指向同源代理链接', async () => {
@@ -339,18 +336,17 @@ describe('详情推入页: 6 类 material 渲染', () => {
     expect($('.rv-md')).toBeNull()
   })
 
-  it('网页与 Markdown 默认内容优先沉浸,可用悬浮手柄召回审阅工具', async () => {
+  it('网页与 Markdown 默认保持内容优先但不自动进入全屏', async () => {
     await review.openDetail('m-html')
     const view = $('#reviewDetailView')
     expect(view.classList.contains('rv-content-first')).toBe(true)
     expect(view.classList.contains('rv-web-detail')).toBe(true)
-    expect(view.classList.contains('rv-immersive')).toBe(true)
-    $('#reviewChromeHandle').click()
     expect(view.classList.contains('rv-immersive')).toBe(false)
+    expect(document.body.classList.contains('review-immersive-active')).toBe(false)
 
     await review.openDetail('m-text')
     expect(view.classList.contains('rv-markdown-detail')).toBe(true)
-    expect(view.classList.contains('rv-immersive')).toBe(true)
+    expect(view.classList.contains('rv-immersive')).toBe(false)
   })
 
   it('video: <video> 元素指向 /file', async () => {
@@ -425,10 +421,10 @@ describe('详情底条(通过/驳回/搁置/评论) + 三点菜单 + 自动标�
     await review.openDetail('m-tpl')
     await vi.waitFor(() => expect($('#reviewDetailMore')).toBeTruthy())
     $('#reviewDetailMore').click()
-    await vi.waitFor(() => expect($$('.lg-menu-item').length).toBe(2))
+    await vi.waitFor(() => expect($$('.lg-menu-item').length).toBe(7))
     const items = $$('.lg-menu-item').map((b) => b.textContent)
-    expect(items).toEqual(['归档', '复制链接'])
-    $$('.lg-menu-item')[0].click()   // 归档
+    expect(items).toEqual(['通过', '搁置', '驳回', '评论', '在浏览器打开', '归档', '复制链接'])
+    $$('.lg-menu-item')[5].click()
     await vi.waitFor(() => {
       const c = calls.find((x) => x.method === 'POST' && x.url.endsWith('/m-tpl/archive'))
       expect(c).toBeTruthy()
@@ -442,11 +438,13 @@ describe('沉浸阅读(§11b)', () => {
     await review.openDetail('m-md')
     await vi.waitFor(() => expect($('#reviewImmersive')).toBeTruthy())
     const v = document.getElementById('reviewDetailView')
-    expect(v.classList.contains('rv-immersive')).toBe(true)
-    $('#reviewImmersive').click()
     expect(v.classList.contains('rv-immersive')).toBe(false)
     $('#reviewImmersive').click()
     expect(v.classList.contains('rv-immersive')).toBe(true)
+    expect(document.body.classList.contains('review-immersive-active')).toBe(true)
+    $('#reviewImmersive').click()
+    expect(v.classList.contains('rv-immersive')).toBe(false)
+    expect(document.body.classList.contains('review-immersive-active')).toBe(false)
   })
 })
 

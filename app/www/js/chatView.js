@@ -7,12 +7,13 @@
 // 契约导出:init() / open(meta),meta={id,name,provider,effort,model,active_plan}(见 §9)。
 
 import {
-  esc, toast, api, apiJson, wsUrl, LOG, promptModal,
+  esc, toast, api, apiJson, wsUrl, LOG, promptModal, connectionAlive, connectionLost, connectionTrying,
 } from './core.js'
-import { openSheet, openMenu, icons, banner } from './ui.js'
+import { openSheet, openMenu, icons } from './ui.js'
 import * as router from './router.js'
 import { createChatState, applyFrame, markUserSent, markInterrupting } from './normalizedChat.js'
 import { renderChat } from './chatRender.js'
+import { clipSessionTitle, resolveChatHeaderTitle } from './sessionsState.js'
 import { openReconnectingWs } from './ws.js'
 
 // provider 展示名 + 差异化选项
@@ -39,6 +40,22 @@ let els = null                 // 缓存本屏关键节点
 let slash = { open: false, list: [], idx: 0 }
 let otherTimer = null
 let ctxSeen = 0
+let viewGeneration = 0
+let snapshotTimer = null
+let historyAbort = null
+const TITLE_CACHE = 'lofa.title.'
+
+export function expectedMessageCount(value) {
+  if (value === null || value === undefined || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+
+export function snapshotRecordCount(frame) {
+  const messages = Array.isArray(frame && frame.messages) ? frame.messages.length : 0
+  if (messages) return messages
+  return Array.isArray(frame && frame.history) ? frame.history.length : 0
+}
 
 // ── 初始化(接线一次) ────────────────────────────────────────────────────────
 export function init() {
@@ -62,24 +79,93 @@ export function init() {
 // ── 打开会话(可重复调用:切会话时原地重开) ──────────────────────────────────
 export function open(meta) {
   cleanup()
-  cur = Object.assign({ provider: 'claude_code', effort: 'default', model: 'default', active_plan: null }, meta || {})
+  const gen = viewGeneration
+  cur = Object.assign({ provider: 'claude_code', effort: 'default', model: 'default', active_plan: null, titleHint: '', message_count: null }, meta || {})
+  const sessionId = String(cur.id || '')
+  const expectedCount = expectedMessageCount(cur.message_count)
+  const hasExpectedCount = expectedCount !== null
+  let historyLoaded = false
   chatState = createChatState(cur.id)
   ctxSeen = 0
   buildDom()
   render()
-  banner('connecting')
+  const isCurrent = () => gen === viewGeneration && !!cur
+  const markReady = () => {
+    if (!isCurrent()) return
+    historyLoaded = true
+    if (snapshotTimer) { clearTimeout(snapshotTimer); snapshotTimer = null }
+    connectionAlive(false)
+  }
+  const loadHistory = async () => {
+    if (!isCurrent() || historyLoaded || historyAbort) return
+    const ctrl = new AbortController(); historyAbort = ctrl
+    let retryHistory = false
+    try {
+      const d = await api('/api/cc/chat/sessions/' + encodeURIComponent(sessionId) + '/history', { signal: ctrl.signal })
+      if (!isCurrent() || ctrl.signal.aborted) return
+      const historyFrame = {
+        kind: 'snapshot',
+        messages: Array.isArray(d && d.messages) ? d.messages : [],
+        history: Array.isArray(d && d.history) ? d.history : [],
+        tokenUsage: d && d.tokenUsage,
+        preserveLiveState: true,
+        preserveExistingHistory: true,
+      }
+      const loadedCount = snapshotRecordCount(historyFrame)
+      if (hasExpectedCount && loadedCount < expectedCount) {
+        throw new Error('incomplete history: ' + loadedCount + '/' + expectedCount)
+      }
+      applyFrame(chatState, historyFrame)
+      render()
+      markReady()
+      LOG.rec('info', ['chat.history.fallback', sessionId, loadedCount])
+    } catch (e) {
+      if (!ctrl.signal.aborted && isCurrent()) {
+        retryHistory = true
+        LOG.rec('error', ['chat.history.fail', sessionId, e.message || e])
+      }
+    } finally {
+      if (historyAbort === ctrl) historyAbort = null
+      if (retryHistory) scheduleHistory(3000)
+    }
+  }
+  const scheduleHistory = (delay) => {
+    if (!isCurrent() || historyLoaded || historyAbort) return
+    if (snapshotTimer) clearTimeout(snapshotTimer)
+    snapshotTimer = setTimeout(() => { snapshotTimer = null; loadHistory() }, delay)
+  }
+  connectionTrying()
   conn = openReconnectingWs(wsUrl(cur.id), {
-    onOpen: () => { LOG.rec('info', ['chat.ws.open', cur.id]); banner(null) },
-    onFrame: (f) => onFrame(f),
-    onReconnecting: () => banner('disconnected'),
-    onError: () => LOG.rec('error', ['chat.ws.error', cur.id]),
+    onOpen: () => { if (!isCurrent()) return; LOG.rec('info', ['chat.ws.open', sessionId]); connectionAlive(false) },
+    onFrame: (f) => {
+      if (!isCurrent()) return
+      const frame = f && f.kind === 'snapshot' ? Object.assign({}, f, { preserveExistingHistory: true }) : f
+      onFrame(frame)
+      if (f && f.kind === 'snapshot') {
+        const recordCount = snapshotRecordCount(f)
+        const complete = hasExpectedCount ? recordCount >= expectedCount : recordCount > 0
+        if (complete) markReady()
+        else scheduleHistory(0)
+      }
+    },
+    onReconnecting: () => { if (isCurrent()) connectionLost() },
+    onError: () => { if (isCurrent()) LOG.rec('error', ['chat.ws.error', sessionId]) },
   })
+  scheduleHistory(1200)
   startOtherPoll()
 }
 
 function cleanup() {
+  viewGeneration++
+  if (snapshotTimer) { clearTimeout(snapshotTimer); snapshotTimer = null }
+  if (historyAbort) { try { historyAbort.abort() } catch (e) {} historyAbort = null }
   if (conn) { try { conn.leave() } catch (e) {} conn = null }
   if (otherTimer) { clearInterval(otherTimer); otherTimer = null }
+}
+
+export function reconnectNow() {
+  if (!conn || router.current() !== 'chatView') return false
+  return conn.reconnectNow()
 }
 
 // ── DOM 骨架 ────────────────────────────────────────────────────────────────
@@ -153,14 +239,29 @@ function render() {
   scrollBottom()
   syncRun()
   syncSend()
+  syncHead()
   syncContext()
 }
 
 function scrollBottom() { if (els && els.msgs) els.msgs.scrollTop = els.msgs.scrollHeight }
 
 // ── 顶栏 ────────────────────────────────────────────────────────────────────
+function firstMessageText() {
+  const items = (chatState && chatState.items) || []
+  const usable = (i) => i && (i.type === 'user' || i.type === 'assistant') && String(i.text || '').trim()
+  const item = items.find((i) => usable(i) && i.type === 'user') || items.find(usable)
+  return item ? String(item.text) : ''
+}
+function cachedTitle(id) { try { return localStorage.getItem(TITLE_CACHE + id) || '' } catch (e) { return '' } }
+function rememberTemporaryTitle(id, text) {
+  const title = clipSessionTitle(text, 48)
+  if (!id || !title) return
+  try { localStorage.setItem(TITLE_CACHE + id, title) } catch (e) {}
+}
 function syncHead() {
-  els.title.textContent = cur.name || '对话'
+  const first = firstMessageText()
+  if (first) rememberTemporaryTitle(cur.id, first)
+  els.title.textContent = resolveChatHeaderTitle(cur, first, cur.titleHint || cachedTitle(cur.id))
   const p = PROVIDER_LABEL[cur.provider] || cur.provider || ''
   const m = (cur.model && cur.model !== 'default') ? cur.model : '默认'
   const e = (cur.effort && cur.effort !== 'default') ? cur.effort : '默认'
@@ -360,6 +461,7 @@ async function doCompact() {
       effort: (s && s.effort) || cur.effort,
       model: (s && s.model) || cur.model,
       active_plan: (s && s.active_plan) || cur.active_plan,
+      titleHint: cur.titleHint || cachedTitle(cur.id),
     })
   } catch (e) { toast('压缩失败: ' + (e.message || e), { type: 'err' }) }
 }

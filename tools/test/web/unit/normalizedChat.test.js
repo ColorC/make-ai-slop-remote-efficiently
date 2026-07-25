@@ -184,7 +184,9 @@ describe('snapshot 清空重建(重连去重核心)', () => {
         { kind: 'tool_result', toolId: 'T', resultText: 'done' },
       ],
     })
-    expect(types(s)).toEqual(['user', 'assistant', 'tool'])
+    expect(types(s)).toEqual(['user', 'assistant', 'tool', 'user'])
+    expect(s.items.at(-1)).toMatchObject({ type: 'user', text: '\u65e7\u6d88\u606f' })
+    expect(s.items.some((i) => i.text === '\u65e7\u56de\u7b54')).toBe(false)
     expect(find(s, (i) => i.type === 'tool').done).toBe(true)
     expect(s.running).toBe(false)      // 不卡在运行中
     expect(s.streamingId).toBe(null)
@@ -210,6 +212,50 @@ describe('snapshot 清空重建(重连去重核心)', () => {
     applySnapshot(s, { kind: 'snapshot', history: [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }] })
     expect(types(s)).toEqual(['user', 'assistant'])
   })
+
+  it('keeps visible history when an empty snapshot arrives', () => {
+    const s = createChatState('sid')
+    applySnapshot(s, { messages: [
+      { id: 'u1', kind: 'text', role: 'user', content: 'q1' },
+      { id: 'a1', kind: 'text', role: 'assistant', content: 'a1' },
+    ] })
+    const before = s.items.map((i) => ({ ...i }))
+    applySnapshot(s, { messages: [], history: [], tokenUsage: { used: 5, total: 10 } })
+    expect(s.items).toEqual(before)
+    expect(s.tokenBudget).toEqual({ used: 5, total: 10 })
+  })
+
+  it('keeps full history order after a shorter reconnect snapshot and appends new records', () => {
+    const s = createChatState('sid')
+    applySnapshot(s, { messages: [
+      { id: 'u1', kind: 'text', role: 'user', content: 'q1' },
+      { id: 'a1', kind: 'text', role: 'assistant', content: 'a1' },
+      { id: 'u2', kind: 'text', role: 'user', content: 'q2' },
+      { id: 'a2', kind: 'text', role: 'assistant', content: 'a2' },
+    ] })
+    applySnapshot(s, { preserveExistingHistory: true, messages: [
+      { id: 'u2', kind: 'text', role: 'user', content: 'q2' },
+      { id: 'a2', kind: 'text', role: 'assistant', content: 'a2' },
+      { id: 'u3', kind: 'text', role: 'user', content: 'q3' },
+    ] })
+    expect(s.items.map((i) => i.text)).toEqual(['q1', 'a1', 'q2', 'a2', 'q3'])
+  })
+
+  it('atomically replaces a short WS history with all 508 HTTP messages', () => {
+    const s = createChatState('sid')
+    applySnapshot(s, { messages: Array.from({ length: 20 }, (_, i) => ({
+      id: 'short-' + i, kind: 'text', role: i % 2 ? 'assistant' : 'user', content: 'short-' + i,
+    })) })
+    const full = Array.from({ length: 508 }, (_, i) => ({
+      id: 'hist-' + i, kind: 'text', role: i % 2 ? 'assistant' : 'user', content: 'message-' + i,
+    }))
+    applySnapshot(s, { messages: full, preserveExistingHistory: true, preserveLiveState: true })
+    expect(s.items).toHaveLength(508)
+    expect(s.items[0]).toMatchObject({ id: 'hist-0', text: 'message-0' })
+    expect(s.items.at(-1)).toMatchObject({ id: 'hist-507', text: 'message-507' })
+    expect(s.items.some((i) => String(i.id).startsWith('short-'))).toBe(false)
+  })
+
 })
 
 describe('text role=user 去重(本地已回显的不再重复)', () => {
@@ -219,6 +265,19 @@ describe('text role=user 去重(本地已回显的不再重复)', () => {
     applyFrame(s, { kind: 'text', role: 'user', id: 'u1', content: 'hello' })
     expect(s.items.filter((i) => i.type === 'user').length).toBe(1)
   })
+
+  it('deduplicates local user echoes by occurrence count', () => {
+    const s = createChatState()
+    markUserSent(s, 'same')
+    markUserSent(s, 'same')
+    applySnapshot(s, { messages: [
+      { id: 'server-u1', kind: 'text', role: 'user', content: 'same' },
+      { id: 'server-a1', kind: 'text', role: 'assistant', content: 'ack' },
+    ] })
+    expect(s.items.filter((i) => i.type === 'user' && i.text === 'same')).toHaveLength(2)
+    expect(s.items.filter((i) => String(i.id).startsWith('local_user_'))).toHaveLength(1)
+  })
+
 })
 
 describe('markUserSent / markInterrupting', () => {

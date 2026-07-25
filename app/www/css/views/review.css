@@ -1,4 +1,4 @@
-/* review.css — 审阅收件箱(#reviewView)与详情(#reviewDetailView)。
+﻿/* review.css — 审阅收件箱(#reviewView)与详情(#reviewDetailView)。
    列表/筛选是内容层(实底,复用 components.css 的 lg-row/lg-chip);批量操作条与详情
    操作条是功能层(玻璃,docked 在视图底部,随 flex 布局排在滚动区之后,不用 position:fixed)。 */
 
@@ -226,17 +226,7 @@ html.reduce-motion .lg-stamp.show { animation: none; }
 #reviewDetailView.rv-immersive > .lg-nav { transform: translateY(-100%); }
 #reviewDetailView.rv-immersive .rv-detail-bar { transform: translateY(100%); pointer-events: none; }
 
-/* 内容优先详情:网页/Markdown 不重复占用大标题、元数据框和厚文档卡。
-   默认沉浸时正文只保留安全区,接近 100% 视口;悬浮手柄召回审阅工具。 */
-.rv-chrome-handle {
-  display: none; position: absolute; top: calc(var(--safe-top) + 7px); right: 8px; z-index: 8;
-  width: 34px; height: 34px; border-radius: var(--r-pill);
-  color: var(--fg); background: var(--glass-nav-fill); border: 1px solid var(--line);
-  -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
-  box-shadow: var(--shadow-card); opacity: .82;
-}
-.rv-chrome-handle svg { width: 17px; height: 17px; }
-#reviewDetailView.rv-content-first.rv-immersive .rv-chrome-handle { display: grid; place-items: center; }
+/* 内容优先详情:网页/Markdown 不重复占用大标题、元数据框和厚文档卡。 */
 
 #reviewDetailView.rv-content-first .rv-d-head { display: none; }
 #reviewDetailView.rv-content-first .rv-d-doc {
@@ -361,3 +351,64 @@ html.reduce-motion .lg-stamp.show { animation: none; }
 
 /* ══ 视频 ══ */
 .rv-video video { display: block; width: 100%; border-radius: 14px; background: #000; }
+
+
+/* Content-first web detail: material owns the detail pane; controls float above it. */
+#reviewDetailView.rv-web-detail > .lg-nav {
+  background: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none;
+  pointer-events: none;
+}
+#reviewDetailView.rv-web-detail > .lg-nav .lg-nav-back,
+#reviewDetailView.rv-web-detail > .lg-nav .lg-nav-actions { pointer-events: auto; }
+#reviewDetailView.rv-web-detail > .lg-nav .lg-nav-mid { display: none; }
+#reviewDetailView.rv-web-detail .rv-detail-scroll { padding: 0 !important; transition: none; }
+#reviewDetailView.rv-web-detail .rv-d-main { padding: 0 !important; transition: none; }
+#reviewDetailView.rv-web-detail .rv-d-main,
+#reviewDetailView.rv-web-detail .rv-d-doc,
+#reviewDetailView.rv-web-detail .rv-detail-content,
+#reviewDetailView.rv-web-detail .rv-web {
+  width: 100%; height: 100%; max-width: none; margin: 0;
+}
+#reviewDetailView.rv-web-detail .rv-detail-comments { display: none; }
+#reviewDetailView.rv-web-detail .rv-web-bar,
+#reviewDetailView.rv-web-detail .rv-tpl { display: none; }
+#reviewDetailView.rv-web-detail .rv-detail-bar { display: none; }
+
+/* True material-only fullscreen. This also overrides router split and desktop rail rules. */
+body.review-immersive-active #app { padding: 0 !important; }
+body.review-immersive-active #bottomNav,
+body.review-immersive-active #reviewView { display: none !important; }
+body.review-immersive-active #viewport {
+  position: fixed !important; inset: 0 !important; z-index: 1000;
+  display: block !important; width: 100vw; height: 100vh; background: #000;
+}
+body.review-immersive-active #reviewDetailView,
+#reviewDetailView:fullscreen {
+  position: fixed !important; inset: 0 !important; z-index: 1001 !important;
+  display: flex !important; width: 100vw !important; height: 100vh !important;
+  border: 0 !important; background: #000;
+}
+body.review-immersive-active #reviewDetailView > .lg-nav,
+body.review-immersive-active #reviewDetailView .rv-detail-bar,
+body.review-immersive-active #reviewDetailView .rv-d-head,
+body.review-immersive-active #reviewDetailView .rv-detail-comments,
+body.review-immersive-active #reviewDetailView .rv-web-bar,
+body.review-immersive-active #reviewDetailView .rv-tpl { display: none !important; }
+body.review-immersive-active #reviewDetailView .rv-detail-scroll {
+  flex: 1; width: 100%; height: 100%; padding: 0 !important; overflow: auto;
+}
+body.review-immersive-active #reviewDetailView.rv-web-detail .rv-detail-scroll { overflow: hidden; }
+body.review-immersive-active #reviewDetailView .rv-d-main,
+body.review-immersive-active #reviewDetailView .rv-d-doc,
+body.review-immersive-active #reviewDetailView .rv-detail-content,
+body.review-immersive-active #reviewDetailView .rv-web {
+  width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0 !important;
+  border: 0; border-radius: 0; box-shadow: none; background: transparent;
+}
+body.review-immersive-active #reviewDetailView .rv-web iframe {
+  width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0;
+}
+body.review-immersive-active #reviewDetailView.rv-markdown-detail .rv-detail-content {
+  overflow: auto; padding: max(16px, var(--safe-top)) max(16px, var(--safe-right)) max(16px, var(--safe-bottom)) max(16px, var(--safe-left)) !important;
+  background: var(--bg);
+}

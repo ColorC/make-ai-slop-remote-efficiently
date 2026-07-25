@@ -1,4 +1,4 @@
-// review.spec — 审阅收件箱(§7e/§11c):分段筛选 + 筛选 sheet、详情推入、单条 verdict(mock POST)、多选批量。
+﻿// review.spec — 审阅收件箱(§7e/§11c):分段筛选 + 筛选 sheet、详情推入、单条 verdict(mock POST)、多选批量。
 //   reviewState 逻辑不动,只驱动真 UI;WS /stream mock 成空,避免真连噪声。
 import { test, expect } from '@playwright/test'
 import { baseRoutes, landSessions, until, json } from './helpers.js'
@@ -90,9 +90,7 @@ test.describe('审阅', () => {
     await expect(page.locator('#reviewDetailTitle')).toHaveText('待审报告')
     await expect(page.locator('#reviewDetailBody #rvContent')).toContainText('这是正文内容')
 
-    // 内容优先材料默认沉浸；先用悬浮手柄召回审阅工具，再裁决。
-    await expect(page.locator('#reviewChromeHandle')).toBeVisible()
-    await page.locator('#reviewChromeHandle').click()
+    // Markdown 普通详情保留审阅底栏，不默认进入全屏。
     await expect(page.locator('#reviewDetailView')).not.toHaveClass(/rv-immersive/)
     await page.locator('#reviewDetailBar [data-v="accepted"]').click()
     await until(() => calls.verdict.length)
@@ -117,5 +115,54 @@ test.describe('审阅', () => {
     await until(() => calls.batch.length)
     expect(calls.batch[0].verdict).toBe('accepted')
     expect(calls.batch[0].ids).toContain('m1')
+  })
+  test('网页 Demo 普通模式铺满材料区,全屏只保留材料', async ({ page }) => {
+    const web = {
+      id: 'mweb', kind: 'demo', title: '网页 Demo', tier: 'important', status: 'pending',
+      updated_at: new Date().toISOString(),
+      inline_content: '<!doctype html><html><body style="margin:0;background:#123;color:white"><main id="demo" style="height:100vh">Demo material</main></body></html>',
+    }
+    await baseRoutes(page)
+    await page.route(/\/api\/boss-sight\/reviewstage\/_stats/, (r) => json(r, { by_status: { pending: 1 }, pushed_unread: 0 }))
+    await page.route(/\/api\/boss-sight\/reviewstage\?/, (r) => json(r, { items: [web] }))
+    await page.route(/\/api\/boss-sight\/reviewstage\/mweb(\?|$)/, (r) => json(r, web))
+    await page.routeWebSocket(/\/reviewstage\/stream$/, () => {})
+
+    await toReview(page)
+    await page.locator('#reviewList .rv-row', { hasText: '网页 Demo' }).click()
+    const detail = page.locator('#reviewDetailView')
+    const frame = page.locator('.rv-web iframe')
+    await expect(detail).toHaveClass(/rv-web-detail/)
+    await expect(frame).toBeVisible()
+    await expect(page.locator('#reviewDetailView .lg-nav-mid')).toBeHidden()
+    await expect(page.locator('#reviewDetailBar')).toBeHidden()
+    await expect(page.locator('#rvDHead')).toBeHidden()
+    await expect(frame.contentFrame().locator('#demo')).toContainText('Demo material')
+
+    const normalDetailBox = await detail.boundingBox()
+    const normalFrameBox = await frame.boundingBox()
+    expect(normalDetailBox).toBeTruthy()
+    expect(normalFrameBox).toBeTruthy()
+
+    expect(Math.abs(normalFrameBox.x - normalDetailBox.x)).toBeLessThanOrEqual(2)
+    expect(Math.abs(normalFrameBox.y - normalDetailBox.y)).toBeLessThanOrEqual(2)
+    expect(Math.abs(normalFrameBox.width - normalDetailBox.width)).toBeLessThanOrEqual(2)
+    expect(Math.abs(normalFrameBox.height - normalDetailBox.height)).toBeLessThanOrEqual(2)
+
+    await page.locator('#reviewImmersive').click()
+    await expect(page.locator('body')).toHaveClass(/review-immersive-active/)
+    await expect(page.locator('#bottomNav')).toBeHidden()
+    await expect(page.locator('#reviewView')).toBeHidden()
+    await expect(page.locator('#reviewDetailView > .lg-nav')).toBeHidden()
+
+    const viewport = page.viewportSize()
+    const fullscreenFrameBox = await frame.boundingBox()
+    expect(fullscreenFrameBox.x).toBeLessThanOrEqual(1)
+    expect(fullscreenFrameBox.y).toBeLessThanOrEqual(1)
+    expect(Math.abs(fullscreenFrameBox.width - viewport.width)).toBeLessThanOrEqual(2)
+    expect(Math.abs(fullscreenFrameBox.height - viewport.height)).toBeLessThanOrEqual(2)
+
+    await page.keyboard.press('Escape')
+    await expect(page.locator('body')).not.toHaveClass(/review-immersive-active/)
   })
 })
