@@ -1,11 +1,29 @@
 package cc.colorc.lofa;
 
 import android.content.Intent;
+import android.graphics.Color;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Message;
+import android.view.View;
 import android.webkit.CookieManager;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
+
+import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebChromeClient;
+
+import org.json.JSONObject;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MainActivity extends BridgeActivity {
     @Override
@@ -14,13 +32,22 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(DeviceAutomation.class);
         super.onCreate(savedInstanceState);
         DeviceBridgeService.startIfConfigured(this);
-        DevTunnelService.startIfConfigured(this);   // 配过一次后, 打开 app 自动连回中继(反向调试隧道)
-        // 代码面板是跨源 iframe(http://localhost 应用里嵌 https://主机:12443/code),
-        // WebView 默认拦第三方 cookie → serve-web 的令牌 cookie 回传不了 → "Forbidden"。这里放行。
-        WebView wv = this.getBridge().getWebView();
-        CookieManager cm = CookieManager.getInstance();
-        cm.setAcceptCookie(true);
-        if (wv != null) cm.setAcceptThirdPartyCookies(wv, true);
+        DevTunnelService.startIfConfigured(this);   // Reconnect the reverse debug tunnel when configured.
+
+        WebView webView = getBridge().getWebView();
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        if (webView != null) {
+            // Remote pages run in cross-origin iframes. Keep auth cookies and route target=_blank/window.open
+            // through LofaWebChromeClient so the Dashboard creates an internal tab.
+            cookieManager.setAcceptThirdPartyCookies(webView, true);
+            WebSettings settings = webView.getSettings();
+            settings.setSupportMultipleWindows(true);
+            settings.setJavaScriptCanOpenWindowsAutomatically(true);
+            webView.setWebChromeClient(new LofaWebChromeClient(getBridge()));
+        }
+
+        applyImmersiveMode();
         handleDevTunnelIntent(getIntent());
     }
 
@@ -31,9 +58,111 @@ public class MainActivity extends BridgeActivity {
         handleDevTunnelIntent(intent);
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        applyImmersiveMode();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) applyImmersiveMode();
+    }
+
+    /** Edge-to-edge immersive sticky mode; system bars no longer reserve WebView layout space. */
+    private void applyImmersiveMode() {
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setStatusBarContrastEnforced(false);
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+
+        WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(
+            getWindow(), getWindow().getDecorView()
+        );
+        controller.hide(WindowInsetsCompat.Type.systemBars());
+        controller.setSystemBarsBehavior(
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        );
+
+        // Legacy Android fallback; WindowInsetsControllerCompat is authoritative on newer releases.
+        getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        );
+    }
+
+    private void dispatchNewBrowserTab(String rawUrl) {
+        if (rawUrl == null) return;
+        Uri uri = Uri.parse(rawUrl);
+        String scheme = uri.getScheme();
+        if (scheme == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) return;
+        WebView mainWebView = getBridge().getWebView();
+        if (mainWebView == null) return;
+        String script = "window.dispatchEvent(new CustomEvent('lofa:new-window',{detail:{url:"
+            + JSONObject.quote(rawUrl) + "}}));";
+        runOnUiThread(() -> mainWebView.evaluateJavascript(script, null));
+    }
+
     /**
-     * 从前台的 Activity 启动/停止反向 adb 隧道服务。经 Activity 触发可满足 Android 12+ 的
-     * 前台服务后台启动限制(app 已在前台)，也便于外部经 `am start ... --ez start_devtunnel true` 唤起。
+     * Preserve all Capacitor WebChromeClient behavior and add only popup interception.
+     * The temporary WebView obtains the target URL but is never attached or handed to a system browser.
+     */
+    private final class LofaWebChromeClient extends BridgeWebChromeClient {
+        LofaWebChromeClient(Bridge bridge) {
+            super(bridge);
+        }
+
+        @Override
+        public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+            if (resultMsg == null || !(resultMsg.obj instanceof WebView.WebViewTransport)) return false;
+
+            AtomicBoolean delivered = new AtomicBoolean(false);
+            WebView popup = new WebView(MainActivity.this);
+            popup.getSettings().setJavaScriptEnabled(true);
+            popup.setWebViewClient(new WebViewClient() {
+                private boolean deliver(String url) {
+                    if (url == null || url.equals("about:blank") || !delivered.compareAndSet(false, true)) return false;
+                    dispatchNewBrowserTab(url);
+                    popup.stopLoading();
+                    popup.destroy();
+                    return true;
+                }
+
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView child, WebResourceRequest request) {
+                    return request != null && deliver(request.getUrl().toString());
+                }
+
+                @Override
+                @SuppressWarnings("deprecation")
+                public boolean shouldOverrideUrlLoading(WebView child, String url) {
+                    return deliver(url);
+                }
+
+                @Override
+                public void onPageStarted(WebView child, String url, android.graphics.Bitmap favicon) {
+                    if (!deliver(url)) super.onPageStarted(child, url, favicon);
+                }
+            });
+
+            WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+            transport.setWebView(popup);
+            resultMsg.sendToTarget();
+            return true;
+        }
+    }
+
+    /**
+     * Start or stop the reverse adb tunnel from the foreground Activity. This satisfies Android 12+
+     * foreground-service restrictions and supports external wakeup via the start_devtunnel intent extra.
      */
     private void handleDevTunnelIntent(Intent intent) {
         if (intent == null) return;

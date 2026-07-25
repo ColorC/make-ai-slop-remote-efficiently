@@ -14,6 +14,7 @@ import * as reviewView from './reviewView.js'
 import * as projectsView from './projectsView.js'
 import * as settingsView from './settingsView.js'
 import * as notes from './notesView.js'
+import * as browserView from './browserView.js'
 import { startRemote } from './remote.js'
 
 const TABS = { sessions: 'sessionsView', review: 'reviewView', projects: 'projectsView', me: 'meView' }
@@ -60,6 +61,7 @@ function boot() {
   reviewView.init()
   projectsView.init()
   settingsView.init({ onConnected })
+  browserView.init()
 
   // opener 注册(深链 / 通知点击 / remote.navigate 共用)
   router.registerOpener('chat', (meta) => { chatView.open(meta); router.push('chatView') })
@@ -67,8 +69,9 @@ function boot() {
   router.registerOpener('review-detail', (id) => reviewView.openDetail(id))
   router.registerOpener('project-detail', (id) => projectsView.openDetail(id))
   router.registerOpener('notes', () => notes.openNotes())
-  router.registerOpener('code', () => notes.openCode())
-  router.registerOpener('web', (p) => notes.openWeb((p && p.url) || '', (p && p.title) || ''))
+  router.registerOpener('code', () => browserView.openHome())
+  router.registerOpener('browser', () => browserView.openHome())
+  router.registerOpener('web', (p) => browserView.openWeb((p && p.url) || '', (p && p.title) || ''))
   router.registerOpener('connect', () => settingsView.openConnect())
   router.registerOpener('session', (id) => { router.tab('sessions'); void id })
   router.registerOpener('review', (id) => { router.tab('review'); if (id) reviewView.openDetail(id) })

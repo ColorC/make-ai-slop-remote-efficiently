@@ -1,10 +1,8 @@
-/* misc.css — 全屏 iframe 推入页(笔记 / 代码面板)与悬浮返回钮等杂项。 */
+/* misc.css - full-screen notes iframe and floating back control. */
 
-#notesView, #codeView, #webView { background: var(--surface-input); }
+#notesView { background: var(--surface-input); }
 .iframe-full { flex: 1; width: 100%; border: 0; background: var(--surface-input); }
-#codeView .iframe-full { background: #1e1e1e; }
 
-/* 代码面板把整屏让给 VSCode,用角上悬浮返回钮代替顶栏 */
 .float-back {
   position: absolute; top: calc(var(--safe-top) + 6px); left: 6px; z-index: 50;
   width: 44px; height: 44px; border-radius: var(--r-pill);

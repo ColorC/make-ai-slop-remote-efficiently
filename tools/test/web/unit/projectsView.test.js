@@ -2,11 +2,11 @@
 // projectsView UI 单测 — 真实驱动新渲染层(DOM + 拦截 fetch), 锁住:
 //   · 四段(segmented)切换:应用 / 列表 / 任务 / 计划(§11e 项目双视图 + 追加修订)
 //   · 应用段=真启动器:/api/project-views 的 apps 置顶 + 全部项目图标宫格(#projectsApps)
-//   · 应用/列表点击 → 打开 app 内全屏网页(#webView 推入)/ 进项目详情
+//   · 应用/列表点击 → 打开 app 内全屏网页(#browserView 推入)/ 进项目详情
 //   · 列表段:按分组渲染 + 可折叠分组头(折叠态记 localStorage)+ 行内简介 + 快速入口按钮
 //   · 筛选 pill 只在任务/计划段显示;筛选 sheet(状态单选 + 计划段项目单选)
 //   · 详情推入页三形态 · 接口失败可重试错误卡 · 顶栏刷新穿透 ?fresh=1 · 全程只读(无写请求)
-// 每例 resetModules + localStorage.clear() 重新 import(含 router / notesView),隔离模块级状态。
+// 每例 resetModules + localStorage.clear() 重新 import(含 router / browserView),隔离模块级状态。
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 const DOM = `
@@ -16,8 +16,7 @@ const DOM = `
     <section class="view" id="projectsView"></section>
     <section class="view" id="projectDetailView"></section>
     <section class="view" id="notesView"></section>
-    <section class="view" id="codeView"></section>
-    <section class="view" id="webView"></section>
+    <section class="view" id="browserView"></section>
   </div>
 `
 
@@ -97,9 +96,9 @@ beforeEach(async () => {
   }))
   core = await import('../../../../app/www/js/core.js')
   router = await import('../../../../app/www/js/router.js')
-  const notes = await import('../../../../app/www/js/notesView.js')
+  const browser = await import('../../../../app/www/js/browserView.js')
   projects = await import('../../../../app/www/js/projectsView.js')
-  router.registerOpener('web', (p) => notes.openWeb((p && p.url) || '', (p && p.title) || ''))
+  router.registerOpener('web', (p) => browser.openWeb((p && p.url) || '', (p && p.title) || ''))
   core.store.base = 'http://test'
   projects.init()
 })
@@ -137,15 +136,15 @@ describe('列表段(默认)', () => {
     })
   })
 
-  it('快速入口按钮: 点击项目 links 在 app 内打开网页(#webView 推入, URL 归一)', async () => {
+  it('快速入口按钮: 点击项目 links 在 app 内打开网页(#browserView 推入, URL 归一)', async () => {
     projects.load()
     await vi.waitFor(() => expect(items().length).toBe(2))
     const link = $('projectsList').querySelector('.proj-link')
     expect(link.textContent).toContain('看板')
     link.click()
-    await vi.waitFor(() => expect($('webView').classList.contains('show')).toBe(true))
+    await vi.waitFor(() => expect($('browserView').classList.contains('show')).toBe(true))
     // http://localhost:8210/ → 主机名换成 store.base 主机, 端口保留
-    expect($('webView').querySelector('iframe').getAttribute('data-url')).toBe('http://test:8210/')
+    expect($('browserView').querySelector('iframe').getAttribute('src')).toBe('http://test:8210/')
   })
 
   it('筛选 pill 在列表段隐藏(状态筛选只属任务/计划)', async () => {
@@ -171,15 +170,15 @@ describe('应用段(真启动器)', () => {
     expect($('projectsFilterPill').style.display).toBe('none')
   })
 
-  it('点击 app → app 内全屏网页(#webView 推入, 相对路径拼 base)', async () => {
+  it('点击 app → app 内全屏网页(#browserView 推入, 相对路径拼 base)', async () => {
     projects.load()
     await vi.waitFor(() => expect(items().length).toBe(2))
     segBtn('apps').click()
     await vi.waitFor(() => expect($('projectsApps')).toBeTruthy())
     const cell = Array.prototype.find.call($('projectsApps').querySelectorAll('.proj-app'), (c) => c.textContent.includes('行者 demo'))
     cell.click()
-    await vi.waitFor(() => expect($('webView').classList.contains('show')).toBe(true))
-    expect($('webView').querySelector('iframe').getAttribute('data-url')).toBe('http://test/walker-game/')
+    await vi.waitFor(() => expect($('browserView').classList.contains('show')).toBe(true))
+    expect($('browserView').querySelector('iframe').getAttribute('src')).toBe('http://test/walker-game/')
   })
 
   it('app 图标:icon_url 渲染成图标(img,拼 base), 无则回退 emoji', async () => {

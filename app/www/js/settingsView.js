@@ -11,6 +11,7 @@ import {
 import { largeHeader, icons, openSheet } from './ui.js'
 import * as router from './router.js'
 import * as notes from './notesView.js'
+import * as browserView from './browserView.js'
 
 const TERM_KEY = 'lofa.termFontSize'
 const TERM_SIZES = [11, 12, 13, 14, 16, 18]
@@ -67,7 +68,7 @@ function render() {
 
   const termRows = navRow('termfont', '默认字号', termFontSize() + ' px')
 
-  const toolRows = navRow('code', '代码面板') + navRow('notes', '笔记')
+  const toolRows = navRow('browser', '\u8fdc\u7a0b\u7f51\u9875') + navRow('notes', '\u7b14\u8bb0')
 
   const up = store.update
   // 版本行(V1 空值 bug 修复):版本源 = 原生 Capacitor App 插件(app.js 设 window.__lofaVersion);
@@ -98,7 +99,7 @@ function wire() {
       else if (k === 'glass') { setReduceGlass(!getReduceGlass()); render() }
       else if (k === 'motion') { setReduceMotion(!getReduceMotion()); render() }
       else if (k === 'termfont') pickTermFont()
-      else if (k === 'code') notes.openCode()
+      else if (k === 'browser') browserView.openHome()
       else if (k === 'notes') notes.openNotes()
       else if (k === 'update') { if (store.update) { e.stopPropagation(); doUpdate() } else { toast('检查中…'); checkUpdate().then(() => render()) } }
       else if (k === 'doupdate') { e.stopPropagation(); doUpdate() }

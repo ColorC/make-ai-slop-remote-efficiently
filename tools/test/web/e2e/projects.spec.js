@@ -1,6 +1,6 @@
 // projects.spec — 项目只读双视图(§7f + §11e + 追加修订):
 //   四段切换(应用/列表/任务/计划)、应用段真启动器(apps 宫格 + 项目宫格)、列表段分组+快速入口、
-//   app 内打开网页推入(#webView)、详情推入、只读护栏(全程只 GET)。
+//   app 内打开网页推入(#browserView)、详情推入、只读护栏(全程只 GET)。
 import { test, expect } from '@playwright/test'
 import { baseRoutes, landSessions, json } from './helpers.js'
 
@@ -84,21 +84,21 @@ test.describe('项目双视图', () => {
     await expect(page.locator('#projectsApps .proj-app', { hasText: '行者 demo' }).locator('.proj-app-icon')).toHaveClass(/emoji/)
   })
 
-  test('点击 app → app 内全屏网页(#webView 推入, 相对路径拼 base)', async ({ page }) => {
+  test('点击 app → app 内全屏网页(#browserView 推入, 相对路径拼 base)', async ({ page }) => {
     await setup(page)
     await toProjects(page)
     await page.locator('#projectsBoardSeg button[data-v="apps"]').click()
     await page.locator('#projectsApps .proj-app', { hasText: '行者 demo' }).click()
-    await expect(page.locator('#webView')).toHaveClass(/show/)
-    await expect(page.locator('#webView iframe')).toHaveAttribute('data-url', 'https://localhost:5599/walker-game/')
+    await expect(page.locator('#browserView')).toHaveClass(/show/)
+    await expect(page.locator('#browserView iframe')).toHaveAttribute('src', 'https://localhost:5599/walker-game/')
   })
 
   test('列表段快速入口:点项目 links 打开网页(localhost 主机替换)', async ({ page }) => {
     await setup(page)
     await toProjects(page)
     await page.locator('#projectsList .proj-item', { hasText: '项目甲' }).locator('.proj-link', { hasText: '看板' }).click()
-    await expect(page.locator('#webView')).toHaveClass(/show/)
-    await expect(page.locator('#webView iframe')).toHaveAttribute('data-url', 'http://localhost:8210/')
+    await expect(page.locator('#browserView')).toHaveClass(/show/)
+    await expect(page.locator('#browserView iframe')).toHaveAttribute('src', 'http://localhost:8210/')
   })
 
   test('列表段分组头可折叠', async ({ page }) => {

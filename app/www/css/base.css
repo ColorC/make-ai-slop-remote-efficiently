@@ -128,7 +128,7 @@ html.reduce-motion .view.anim-in, html.reduce-motion .view.anim-out { animation:
    #ambient 网格直接透出;每个 tab 用实底，避免四个独立 backdrop 层。
    手机底部胶囊 nav 保持玻璃不动(浮起元素,非侧栏/页签)。 ── */
 @media (min-width: 1024px) {
-  #app { padding-left: 100px; }   /* rail 76 + 右隙 24(网格露出带) */
+  body.nav-visible #app { padding-left: 100px; }   /* Reserve rail width only while navigation is visible. */
   #app #bottomNav {
     position: fixed; left: 0; top: 0; bottom: 0; transform: none;
     width: 76px; margin: 0; padding: 10px 6px;

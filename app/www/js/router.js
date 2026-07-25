@@ -34,7 +34,9 @@ function notify() { const p = { tab: S.tab, view: current() }; changeCbs.forEach
 
 function updateNav() {
   const atRoot = S.stack.length === 1 || !!S.split
-  const n = nav(); if (n) n.classList.toggle('show', atRoot && !!S.tab)
+  const show = atRoot && !!S.tab
+  const n = nav(); if (n) n.classList.toggle('show', show)
+  document.body.classList.toggle('nav-visible', show)
   document.querySelectorAll('#bottomNav .lg-tab').forEach((b) => b.classList.toggle('on', b.getAttribute('data-tab') === S.tab))
 }
 
