@@ -103,7 +103,7 @@ def build_candidate(version_code: int, version_name: str, *, sync_web: bool) -> 
         "buildType": "release",
         "debuggable": False,
         "liveReleaseChanged": False,
-        "builtAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "builtAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     manifest_path = candidate.with_suffix(".manifest.json")
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -132,7 +132,7 @@ def offer_candidate(manifest_path: Path) -> Path:
         "filename": "lofa-latest.apk",
         "buildType": "release",
         "debuggable": False,
-        "publishedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "publishedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "installEnqueued": False,
     }
     temporary_manifest = RELEASE_ROOT / "manifest.json.tmp"
