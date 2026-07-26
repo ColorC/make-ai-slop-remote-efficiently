@@ -3,12 +3,40 @@
 import { describe, it, expect } from 'vitest'
 import {
   normalizeSessions, groupRows, recentCwds, filterRows,
-  toEpochMs, tailCwd, termLabel, providerLabel, relTime,
+  toEpochMs, tailCwd, termLabel, providerLabel, relTime, sessionIdentifier, historySessionTitle,
 } from '../../../../app/www/js/sessionsState.js'
 
 // 固定"现在"= 2026-07-16 12:00 本地,便于时间桶断言。
 const NOW = new Date(2026, 6, 16, 12, 0, 0).getTime()
 const DAY = 86400000
+
+
+describe('session identity and legacy title backfill', () => {
+  it('keeps an independent stable identifier for chat and terminal rows', () => {
+    const [chat, term] = normalizeSessions(
+      [{ id: 'chat-5a77b0ac0e0e', provider: 'codex', name: '已有内容标题', alive: true }],
+      [{ id: 'term-abcdef123456', cmd: ['powershell'], alive: true }],
+      {},
+    )
+    expect(chat.title).toBe('已有内容标题')
+    expect(chat.identity).toBe('Codex · ac0e0e')
+    expect(term.identity).toBe('终端 · 123456')
+  })
+  it('labels controller sessions and always falls back to provider plus short id', () => {
+    expect(sessionIdentifier({ id: 'controller-8c800e2', provider: 'controller' })).toBe('总控 · c800e2')
+    const [row] = normalizeSessions([{ id: 'chat-0000abcdef', provider: 'codex', name: '', alive: true }], [], {})
+    expect(row.title).toBe('Codex 会话 · abcdef')
+    expect(row.identity).toBe('Codex · abcdef')
+  })
+  it('extracts user text first, then assistant, and ignores context-only history', () => {
+    expect(historySessionTitle({ messages: [
+      { kind: 'text', role: 'assistant', content: '助手标题' },
+      { kind: 'text', role: 'user', content: '用户标题' },
+    ] })).toBe('用户标题')
+    expect(historySessionTitle({ messages: [{ kind: 'text', role: 'assistant', content: '助手标题' }] })).toBe('助手标题')
+    expect(historySessionTitle({ messages: [{ kind: 'context_event', role: 'system', content: '上下文' }] })).toBe('')
+  })
+})
 
 describe('toEpochMs 时间归一', () => {
   it('epoch 秒 → 毫秒', () => { expect(toEpochMs(1700000000)).toBe(1700000000000) })

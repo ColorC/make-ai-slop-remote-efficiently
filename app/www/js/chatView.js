@@ -13,7 +13,7 @@ import { openSheet, openMenu, icons } from './ui.js'
 import * as router from './router.js'
 import { createChatState, applyFrame, markUserSent, markInterrupting } from './normalizedChat.js'
 import { renderChat } from './chatRender.js'
-import { clipSessionTitle, resolveChatHeaderTitle } from './sessionsState.js'
+import { clipSessionTitle, resolveChatHeaderTitle, sessionIdentifier } from './sessionsState.js'
 import { openReconnectingWs } from './ws.js'
 
 // provider 展示名 + 差异化选项
@@ -262,10 +262,10 @@ function syncHead() {
   const first = firstMessageText()
   if (first) rememberTemporaryTitle(cur.id, first)
   els.title.textContent = resolveChatHeaderTitle(cur, first, cur.titleHint || cachedTitle(cur.id))
-  const p = PROVIDER_LABEL[cur.provider] || cur.provider || ''
+  const identity = sessionIdentifier(cur)
   const m = (cur.model && cur.model !== 'default') ? cur.model : '默认'
   const e = (cur.effort && cur.effort !== 'default') ? cur.effort : '默认'
-  els.pill.textContent = p + ' · ' + m + ' · ' + e
+  els.pill.textContent = identity + ' · ' + m + ' · ' + e
 }
 
 // ── 运行指示行 ──────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ import {
 } from './ui.js'
 import * as router from './router.js'
 import {
-  normalizeSessions, groupRows, filterRows,
+  normalizeSessions, groupRows, filterRows, historySessionTitle,
   providerKey, tailCwd, relTime,
 } from './sessionsState.js'
 
@@ -137,7 +137,7 @@ async function refresh() {
       api('/api/cc/chat/sessions').catch(() => ({ items: [] })),
       api('/api/cc/sessions?include_recoverable=true').catch(() => ({ items: [] })),
       // 窗口放宽到 7 天:非活跃会话也拿得到 digest 中文主题与最后活动时间
-      api('/api/cc/chat/active?window_sec=604800&limit=80').catch(() => ({})),
+      api('/api/cc/chat/active?window_sec=315360000&limit=500').catch(() => ({})),
     ])
     const chatItems = (chat && chat.items) || []
     const ptyAlive = (pty && pty.items) || []
@@ -201,7 +201,7 @@ function sideHtml(r) {
 // hover 预览卡内容(hover 设备;触屏等价 = ⓘ 底部 sheet,内容同源)。
 function previewHtml(r, title) {
   return '<div class="pv-t">' + badgeHtml(r.status) + '<span>' + esc(title) + '</span></div>' +
-    '<div class="pv-d">' + esc(r.providerName) + (r.kind === 'term' ? ' · 终端' : ' · 对话') + '</div>' +
+    '<div class="pv-d">' + esc(r.identity) + (r.kind === 'term' ? ' · 终端' : ' · 对话') + '</div>' +
     '<div class="pv-meta"><span>' + esc(r.cwd || '—') + '</span><span>' + esc(relTime(r.lastActive, Date.now()) || '—') + '</span></div>'
 }
 
@@ -210,30 +210,32 @@ function getTermName(id) { try { return localStorage.getItem('lofa.termName.' + 
 
 // ── 弱标题懒补全:/active 有 80 条上限,agent transcript 多时老会话拿不到 preview。
 // 对 titleWeak 行懒取一次 history 首条用户消息,localStorage 永久缓存(标题不会变)。
+// Backfill every weak legacy title. Old persistent titleTried flags are intentionally ignored.
 const TITLE_CACHE = 'lofa.title.'
-const TITLE_TRIED = 'lofa.titleTried.'
-const TITLE_RETRY_MS = 86400000   // 失败/空史 24h 内不重试(持久化,防 app 重启后再冲一轮)
+const _titleLoading = new Set()
+const _titleDone = new Set()
+const _titleRetryAt = new Map()
 function cachedTitle(id) { try { return localStorage.getItem(TITLE_CACHE + id) || '' } catch (e) { return '' } }
 function saveCachedTitle(id, t) { try { localStorage.setItem(TITLE_CACHE + id, t) } catch (e) {} }
-function triedRecently(id) {
-  try { const ts = Number(localStorage.getItem(TITLE_TRIED + id)) || 0; return Date.now() - ts < TITLE_RETRY_MS } catch (e) { return false }
-}
-function markTried(id) { try { localStorage.setItem(TITLE_TRIED + id, String(Date.now())) } catch (e) {} }
-function clipTitle(s) { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > 48 ? t.slice(0, 48) + '…' : t }
-// 每轮最多 4 条、串行拉取:history 对大会话是后端重活,别成风暴(曾把 ccdaemon 打卡死)。
 async function fillWeakTitles(rows) {
-  const need = (rows || []).filter((r) => r.kind === 'chat' && r.titleWeak && !cachedTitle(r.id) && !triedRecently(r.id)).slice(0, 4)
+  const now = Date.now()
+  const need = (rows || []).filter((r) => r.kind === 'chat' && r.titleWeak && !cachedTitle(r.id) && !_titleDone.has(r.id) && !_titleLoading.has(r.id) && (_titleRetryAt.get(r.id) || 0) <= now)
   if (!need.length) return
-  let changed = false
-  for (const r of need) {
-    markTried(r.id)
-    try {
-      const h = await api('/api/cc/chat/sessions/' + encodeURIComponent(r.id) + '/history')
-      const first = ((h && h.messages) || []).find((m) => m && m.kind === 'text' && m.role === 'user' && String(m.content || '').trim())
-      if (first) { saveCachedTitle(r.id, clipTitle(first.content)); changed = true }
-    } catch (e) { /* 拿不到就保留兜底标题,24h 内不重试 */ }
+  need.forEach((r) => _titleLoading.add(r.id))
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < need.length) {
+      const r = need[cursor++]
+      try {
+        const h = await api('/api/cc/chat/sessions/' + encodeURIComponent(r.id) + '/history')
+        const title = historySessionTitle(h)
+        if (title) saveCachedTitle(r.id, title)
+        _titleDone.add(r.id)
+      } catch (e) { _titleRetryAt.set(r.id, Date.now() + 60000) }
+      finally { _titleLoading.delete(r.id); renderList() }
+    }
   }
-  if (changed) renderList()
+  await Promise.all(Array.from({ length: Math.min(3, need.length) }, worker))
 }
 
 function rowTitle(r) {
@@ -244,7 +246,7 @@ function buildRow(r) {
   const title = rowTitle(r)
   const stKey = { waiting: 'wait', recoverable: 'recover', running: 'run' }[r.status] || ''
   // 副行(目录/来源)留在 DOM 但默认 CSS 隐藏(少字);完整信息进 ⓘ sheet / hover 预览。
-  const sub = [r.providerName, tailCwd(r.cwd), relTime(r.lastActive, Date.now())].filter(Boolean).join(' · ')
+  const sub = [r.identity, tailCwd(r.cwd), relTime(r.lastActive, Date.now())].filter(Boolean).join(' · ')
   const row = listRow({
     icon: r.kind === 'term' ? icons.term : icons.chat,
     iconClass: 'pv-' + providerKey(r.provider),
@@ -267,6 +269,8 @@ function buildRow(r) {
     row.insertAdjacentHTML('afterbegin',
       '<span class="lg-check ss-cb" aria-checked="' + (_batch.ids.has(r.id) ? 'true' : 'false') + '"><span class="cb">' + icons.check + '</span></span>')
   }
+  const titleEl = row.querySelector('.lg-row-title')
+  if (titleEl && r.identity) titleEl.insertAdjacentHTML('beforeend', '<span class="ss-id">' + esc(r.identity) + '</span>')
   bindRowPreview(row, () => previewHtml(r, title))
   return row
 }
@@ -280,6 +284,7 @@ function openInfoSheet(r) {
   const sheet = openSheet({ id: 'sessInfoSheet', title, rows: [] })
   const body = sheet.el.querySelector('.lg-sheet-body')
   body.innerHTML =
+    kvRow('标识', esc(r.identity || '—')) +
     kvRow('状态', badgeHtml(r.status) || '<span class="lg-dim">已结束</span>') +
     kvRow('来源', esc(r.providerName) + (r.kind === 'term' ? '(终端)' : '(对话)')) +
     kvRow('目录', esc(r.cwd || '—'), 'dir') +
