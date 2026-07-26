@@ -136,7 +136,7 @@ async function refresh() {
     const [chat, pty, active] = await Promise.all([
       api('/api/cc/chat/sessions').catch(() => ({ items: [] })),
       api('/api/cc/sessions?include_recoverable=true').catch(() => ({ items: [] })),
-      // 窗口放宽到 7 天:非活跃会话也拿得到 digest 中文主题与最后活动时间
+      // 覆盖十年旧会话:优先拿智能总结或首条消息 preview。
       api('/api/cc/chat/active?window_sec=315360000&limit=500').catch(() => ({})),
     ])
     const chatItems = (chat && chat.items) || []
@@ -201,16 +201,15 @@ function sideHtml(r) {
 // hover 预览卡内容(hover 设备;触屏等价 = ⓘ 底部 sheet,内容同源)。
 function previewHtml(r, title) {
   return '<div class="pv-t">' + badgeHtml(r.status) + '<span>' + esc(title) + '</span></div>' +
-    '<div class="pv-d">' + esc(r.identity) + (r.kind === 'term' ? ' · 终端' : ' · 对话') + '</div>' +
+    '<div class="pv-d">' + esc(r.providerName) + (r.kind === 'term' ? ' · 终端' : ' · 对话') + '</div>' +
     '<div class="pv-meta"><span>' + esc(r.cwd || '—') + '</span><span>' + esc(relTime(r.lastActive, Date.now()) || '—') + '</span></div>'
 }
 
 // 终端本地展示名(改名存本地,与终端屏共用键)。
 function getTermName(id) { try { return localStorage.getItem('lofa.termName.' + id) || '' } catch (e) { return '' } }
 
-// ── 弱标题懒补全:/active 有 80 条上限,agent transcript 多时老会话拿不到 preview。
-// 对 titleWeak 行懒取一次 history 首条用户消息,localStorage 永久缓存(标题不会变)。
-// Backfill every weak legacy title. Old persistent titleTried flags are intentionally ignored.
+// ── 旧会话标题全量回填:无智能总结时取 history 第一条文本消息。
+// 忽略旧 titleTried 阻塞,并受控并发处理全部旧会话。
 const TITLE_CACHE = 'lofa.title.'
 const _titleLoading = new Set()
 const _titleDone = new Set()
@@ -246,7 +245,7 @@ function buildRow(r) {
   const title = rowTitle(r)
   const stKey = { waiting: 'wait', recoverable: 'recover', running: 'run' }[r.status] || ''
   // 副行(目录/来源)留在 DOM 但默认 CSS 隐藏(少字);完整信息进 ⓘ sheet / hover 预览。
-  const sub = [r.identity, tailCwd(r.cwd), relTime(r.lastActive, Date.now())].filter(Boolean).join(' · ')
+  const sub = [r.providerName, tailCwd(r.cwd), relTime(r.lastActive, Date.now())].filter(Boolean).join(' · ')
   const row = listRow({
     icon: r.kind === 'term' ? icons.term : icons.chat,
     iconClass: 'pv-' + providerKey(r.provider),
@@ -269,8 +268,6 @@ function buildRow(r) {
     row.insertAdjacentHTML('afterbegin',
       '<span class="lg-check ss-cb" aria-checked="' + (_batch.ids.has(r.id) ? 'true' : 'false') + '"><span class="cb">' + icons.check + '</span></span>')
   }
-  const titleEl = row.querySelector('.lg-row-title')
-  if (titleEl && r.identity) titleEl.insertAdjacentHTML('beforeend', '<span class="ss-id">' + esc(r.identity) + '</span>')
   bindRowPreview(row, () => previewHtml(r, title))
   return row
 }
@@ -284,7 +281,6 @@ function openInfoSheet(r) {
   const sheet = openSheet({ id: 'sessInfoSheet', title, rows: [] })
   const body = sheet.el.querySelector('.lg-sheet-body')
   body.innerHTML =
-    kvRow('标识', esc(r.identity || '—')) +
     kvRow('状态', badgeHtml(r.status) || '<span class="lg-dim">已结束</span>') +
     kvRow('来源', esc(r.providerName) + (r.kind === 'term' ? '(终端)' : '(对话)')) +
     kvRow('目录', esc(r.cwd || '—'), 'dir') +

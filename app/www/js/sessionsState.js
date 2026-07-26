@@ -5,7 +5,7 @@
 
 // provider 展示名与颜色键(颜色变量在 tokens.css:--provider-*)。
 export const PROVIDER_LABEL = { claude_code: 'Claude', codex: 'Codex', controller: '总控', omni_agent: 'Omni', kimi: 'Kimi', opencode: 'OpenCode', term: '终端' }
-const PROVIDER_KEY = { claude_code: 'claude', codex: 'codex', controller: 'omni', omni_agent: 'omni', kimi: 'kimi', opencode: 'opencode', term: 'term' }
+const PROVIDER_KEY = { claude_code: 'claude', codex: 'codex', omni_agent: 'omni', kimi: 'kimi', opencode: 'opencode', term: 'term' }
 
 const DAY = 86400000
 
@@ -88,24 +88,17 @@ export function clipSessionTitle(s, n = 48) {
 }
 
 // 没有内容标题时也必须有可区分标识:来源 + 会话 id 尾号。
-// Stable identifier is independent from the content title and must always be visible.
-export function sessionIdentifier(m) {
-  const base = providerLabel(m && m.provider) || '会话'
+export function chatIdentityTitle(m) {
+  const base = providerLabel(m && m.provider) + ' 会话'
   const id = String((m && m.id) || '').trim()
   return id ? base + ' · ' + id.slice(-6) : base
 }
 
-export function chatIdentityTitle(m) {
-  const provider = providerLabel(m && m.provider) || '会话'
-  const id = String((m && m.id) || '').trim()
-  return id ? provider + ' 会话 · ' + id.slice(-6) : provider + ' 会话'
-}
-
+// 历史没有智能总结时,标题严格取第一条非空文本消息。
 export function historySessionTitle(payload) {
   const messages = (payload && (payload.messages || payload.history)) || []
-  const find = (role) => messages.find((m) => m && m.kind === 'text' && m.role === role && String(m.content || m.text || '').trim())
-  const hit = find('user') || find('assistant')
-  return hit ? clipSessionTitle(hit.content || hit.text, 48) : ''
+  const first = messages.find((m) => m && m.kind === 'text' && String(m.content || m.text || '').trim())
+  return first ? clipSessionTitle(first.content || first.text, 48) : ''
 }
 
 export function resolveChatHeaderTitle(m, firstUserText, titleHint) {
@@ -174,7 +167,6 @@ export function normalizeSessions(chatItems, ptyItems, activeMap) {
       id: m.id,
       kind: 'chat',
       title: chatTitle(m, hit),
-      identity: sessionIdentifier({ id: m.id, provider: m.provider || 'claude_code' }),
       titleWeak,
       provider: m.provider || 'claude_code',
       providerName: providerLabel(m.provider),
@@ -190,7 +182,6 @@ export function normalizeSessions(chatItems, ptyItems, activeMap) {
       id: m.id,
       kind: 'term',
       title: termLabel(m.cmd),
-      identity: sessionIdentifier({ id: m.id, provider: 'term' }),
       provider: 'term',
       providerName: '终端',
       cwd: m.cwd || '',

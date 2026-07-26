@@ -18,8 +18,6 @@
 
 /* ══ 列表行:副行默认隐藏(少字;目录/来源进 ⓘ sheet 与 hover 预览) ══ */
 #sessionsView .lg-row-sub { display: none; }
-/* Stable session identifier is always visible beside the title. */
-#sessionsView .ss-id { display: inline-block; margin-left: 8px; color: var(--fg-3); font-family: var(--mono); font-size: 11px; font-weight: 500; vertical-align: 1px; white-space: nowrap; }
 /* 行左缘状态色条(demo .lr-bar 同源:待输入=ok,在跑=busy,可续接=强白线,已结束=弱线) */
 #sessionsView .ss-bar { flex: 0 0 auto; width: 3px; align-self: stretch; border-radius: 2px; background: var(--line-2); }
 #sessionsView .ss-bar[data-st="wait"] { background: var(--ok); }
