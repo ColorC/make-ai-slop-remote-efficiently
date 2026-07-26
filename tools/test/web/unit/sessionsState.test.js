@@ -110,13 +110,15 @@ describe('normalizeSessions — chat 四态归一', () => {
     const [r] = normalizeSessions([{ ...base, id: 'cq', name: 'Claude 编程 · omnicompany · 07月16日 10:52', claude_session_id: 'cs-q', alive: true }], [], active)
     expect(r.title).toBe('主题标题')
   })
-  it('标题可读化:无 digest 用最后一条用户输入摘录;用户改过的名原样保留', () => {
+  it('title readability:last_user waits for history first-message title;manual name remains', () => {
     const machine = 'Codex 编程 · lofa · 07月16日 10:12'
     const active = { items: [{ session_id: 'cs-u', status: 'waiting', mtime: 1800000000, last_user: '排查隧道断连竞态问题,先看中继日志' }] }
-    const [byHint] = normalizeSessions([{ ...base, id: 'cu', name: machine, claude_session_id: 'cs-u', alive: true }], [], active)
-    expect(byHint.title).toBe('排查隧道断连竞态问题,先看中继日志')
+    const [waitingForHistory] = normalizeSessions([{ ...base, id: 'cu', name: machine, claude_session_id: 'cs-u', alive: true }], [], active)
+    expect(waitingForHistory.title).not.toBe(active.items[0].last_user)
+    expect(waitingForHistory.titleWeak).toBe(true)
     const [renamed] = normalizeSessions([{ ...base, id: 'cv', name: '我的重要任务', claude_session_id: 'cs-u', alive: true }], [], active)
     expect(renamed.title).toBe('我的重要任务')
+    expect(renamed.titleWeak).toBe(false)
   })
   it('标题可读化:默认名且无任何提示 → 去掉相同前缀留可区分尾段', () => {
     const [r] = normalizeSessions([{ ...base, id: 'cw', name: 'Claude 编程 · omnicompany · 07月10日 10:11', alive: true }], [], {})

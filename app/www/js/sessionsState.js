@@ -120,7 +120,6 @@ function chatTitle(m, hit) {
   if (name && !isDefaultName(name)) return name
   if (hit && hit.title) return hit.title
   if (hit && hit.preview) return clipSessionTitle(hit.preview, 48)
-  if (hit && hit.hint) return clipSessionTitle(hit.hint, 36)
   if (name && name !== '未命名智能体对话') {
     const parts = name.split(' · ')
     if (parts.length >= 3) return parts.slice(1).join(' · ')
@@ -162,7 +161,7 @@ export function normalizeSessions(chatItems, ptyItems, activeMap) {
     const mtimeMs = hit && hit.mtime ? hit.mtime * 1000 : 0
     // 弱标题=只能剥前缀/provider 兜底(/active 没带来任何实质内容)。
     // 视图层会对弱标题行懒取一次 history 首条用户消息并缓存(标题不会变,一次成本)。
-    const titleWeak = isDefaultName((m.name || '').trim()) && !(hit && (hit.title || hit.preview || hit.hint))
+    const titleWeak = isDefaultName((m.name || '').trim()) && !(hit && (hit.title || hit.preview))
     rows.push({
       id: m.id,
       kind: 'chat',
