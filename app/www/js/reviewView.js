@@ -116,6 +116,10 @@ let detailGeneration = 0
 let detailAbort = null
 let _segCtl = null
 let _tocHeads = []
+let selectionCleanup = []
+let selectionTimer = null
+let pendingTextSelection = null
+let activeWebFrame = null
 const ICON_IMMERSIVE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>'
 
 // ── tab 根:紧凑两行头部(随内容滚动) + 列表 + 底部批量操作条 ─────────────────
@@ -124,7 +128,14 @@ const ICON_IMMERSIVE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 //   第三行 tier 图例(强制 N/重要 N,真实计数)。整个头部放进滚动容器顶部,随列表一起滚走(反馈 1)。
 export function init() {
   const v = document.getElementById('reviewView'); v.innerHTML = ''
-  router.onChange(({ view }) => { if (view !== 'reviewDetailView') exitImmersive() })
+  router.onChange(({ view }) => {
+    if (view !== 'reviewDetailView') { exitImmersive(); teardownTextSelection() }
+  })
+  if (window.__lofaReviewSelectionMessageHandler) {
+    window.removeEventListener('message', window.__lofaReviewSelectionMessageHandler)
+  }
+  window.addEventListener('message', onReviewSelectionMessage)
+  window.__lofaReviewSelectionMessageHandler = onReviewSelectionMessage
   document.addEventListener('fullscreenchange', () => {
     const detail = document.getElementById('reviewDetailView')
     if (immersive && document.fullscreenElement !== detail) setImmersive(false, true)
@@ -468,6 +479,7 @@ export async function openDetail(id) {
   }
 }
 function buildDetailShell() {
+  teardownTextSelection()
   exitImmersive()
   const v = document.getElementById('reviewDetailView'); if (!v) return
   v.classList.remove('rv-immersive', 'rv-content-first', 'rv-web-detail', 'rv-markdown-detail')
@@ -539,8 +551,13 @@ function renderDetail(m) {
     '<div class="rv-detail-content" id="rvContent"></div>' +
     '<div class="rv-detail-comments" id="rvComments"></div>' +
     '</div>'
-  Promise.resolve(renderContent(document.getElementById('rvContent'), m)).then(setupToc)
+  const content = document.getElementById('rvContent')
+  Promise.resolve(renderContent(content, m)).then(() => {
+    setupToc()
+    setupTextSelection(content, m)
+  })
   renderComments(document.getElementById('rvComments'), m)
+  renderTextNotes(m)
   renderDetailBar(m.id)
   // 网页/Markdown 默认把内容铺满;右上角悬浮手柄可随时召回标题和裁决操作。
   setImmersive(false)
@@ -780,6 +797,220 @@ async function renderMarkdown(c, m) {
   }
 }
 // 网页材料: html / live_url → iframe; custom_web_template → iframe + 通用兜底卡。
+// Mobile text-selection comments. The browser keeps its native copy menu; LOFA adds a nearby comment action.
+// Outer content and same-origin iframes use Selection directly. Cross-origin pages can use the postMessage bridge below.
+function teardownTextSelection() {
+  if (selectionTimer) { clearTimeout(selectionTimer); selectionTimer = null }
+  selectionCleanup.splice(0).forEach((fn) => { try { fn() } catch (e) {} })
+  activeWebFrame = null
+  pendingTextSelection = null
+  hideSelectionAction()
+}
+function hideSelectionAction() {
+  const btn = document.getElementById('rvSelectionComment')
+  if (btn) btn.remove()
+}
+function nodeElement(node) {
+  if (!node) return null
+  return node.nodeType === 1 ? node : node.parentElement
+}
+function isSelectableRange(root, range) {
+  if (!root || !range) return false
+  const start = nodeElement(range.startContainer), end = nodeElement(range.endContainer)
+  if (!start || !end || !root.contains(start) || !root.contains(end)) return false
+  return !start.closest('input,textarea,select,[contenteditable="true"],.lg-modal') &&
+    !end.closest('input,textarea,select,[contenteditable="true"],.lg-modal')
+}
+function closestLine(node) {
+  const el = nodeElement(node)
+  const row = el && el.closest ? el.closest('.rv-mdline[data-line]') : null
+  const n = row ? parseInt(row.getAttribute('data-line'), 10) : 0
+  return isFinite(n) && n > 0 ? n : 0
+}
+function selectorForNode(node, root) {
+  let el = nodeElement(node)
+  if (!el || !root || !root.contains(el)) return ''
+  const parts = []
+  while (el && el !== root && el.nodeType === 1 && parts.length < 8) {
+    if (el.id) { parts.unshift('#' + String(el.id).replace(/[^a-zA-Z0-9_-]/g, '\\$&')); break }
+    const tag = String(el.tagName || '').toLowerCase()
+    if (!tag) break
+    let part = tag
+    const parent = el.parentElement
+    if (parent) {
+      const peers = Array.prototype.filter.call(parent.children, (x) => x.tagName === el.tagName)
+      if (peers.length > 1) part += ':nth-of-type(' + (peers.indexOf(el) + 1) + ')'
+    }
+    parts.unshift(part)
+    el = parent
+  }
+  return parts.join(' > ')
+}
+function selectionRect(range, frame) {
+  let rect = null
+  try { rect = range.getBoundingClientRect ? range.getBoundingClientRect() : null } catch (e) {}
+  if ((!rect || (!rect.width && !rect.height)) && range.getClientRects) {
+    try {
+      const rs = range.getClientRects()
+      rect = rs && rs.length ? rs[rs.length - 1] : rect
+    } catch (e) {}
+  }
+  if (!rect) return null
+  let left = Number(rect.left) || 0, top = Number(rect.top) || 0
+  let right = Number(rect.right) || left + (Number(rect.width) || 0)
+  let bottom = Number(rect.bottom) || top + (Number(rect.height) || 0)
+  if (frame) {
+    const fr = frame.getBoundingClientRect()
+    left += fr.left; right += fr.left; top += fr.top; bottom += fr.top
+  }
+  return { left, top, right, bottom, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
+}
+function textAnchorFromRange(doc, root, range, quote, frame) {
+  let prefix = '', suffix = ''
+  try {
+    const before = doc.createRange(); before.selectNodeContents(root); before.setEnd(range.startContainer, range.startOffset)
+    const after = doc.createRange(); after.selectNodeContents(root); after.setStart(range.endContainer, range.endOffset)
+    prefix = before.toString().slice(-160)
+    suffix = after.toString().slice(0, 160)
+  } catch (e) {}
+  const startLine = closestLine(range.startContainer), endLine = closestLine(range.endContainer)
+  const anchor = {
+    type: 'text', quote: String(quote).slice(0, 1000), prefix, suffix,
+    selector: selectorForNode(range.startContainer, root),
+    url: frame ? (frame.getAttribute('src') || (doc.location && doc.location.href) || '') : '',
+  }
+  if (startLine || endLine) {
+    anchor.line = Math.min(startLine || endLine, endLine || startLine)
+    anchor.lineEnd = Math.max(startLine || endLine, endLine || startLine)
+  }
+  return anchor
+}
+function clearNativeSelection(doc) {
+  try {
+    const sel = doc && doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null
+    if (sel) sel.removeAllRanges()
+  } catch (e) {}
+}
+function showSelectionAction(id, anchor, rect, sourceDoc) {
+  hideSelectionAction()
+  pendingTextSelection = { id, anchor, sourceDoc }
+  const view = document.getElementById('reviewDetailView')
+  if (!view) return
+  const btn = document.createElement('button')
+  btn.type = 'button'; btn.id = 'rvSelectionComment'; btn.className = 'rv-selection-comment'
+  btn.textContent = '\u8bc4\u8bba\u9009\u4e2d\u5185\u5bb9'
+  const vw = Math.max(180, window.innerWidth || document.documentElement.clientWidth || 375)
+  const vh = Math.max(240, window.innerHeight || document.documentElement.clientHeight || 667)
+  if (rect && (rect.width || rect.height)) {
+    const x = Math.max(78, Math.min(vw - 78, rect.left + rect.width / 2))
+    let y = rect.bottom + 10
+    if (y > vh - 72) y = Math.max(12, rect.top - 48)
+    btn.style.left = x + 'px'; btn.style.top = y + 'px'
+  } else btn.classList.add('fallback')
+  const keepSelection = (e) => e.preventDefault()
+  btn.addEventListener('pointerdown', keepSelection)
+  btn.addEventListener('mousedown', keepSelection)
+  btn.addEventListener('click', () => {
+    const pending = pendingTextSelection
+    if (!pending) return
+    hideSelectionAction(); pendingTextSelection = null
+    clearNativeSelection(pending.sourceDoc)
+    addComment(pending.id, pending.anchor)
+  })
+  view.appendChild(btn)
+}
+function captureDocumentSelection(doc, root, frame, m) {
+  let sel = null
+  try { sel = doc.defaultView && doc.defaultView.getSelection ? doc.defaultView.getSelection() : null } catch (e) {}
+  if (!sel || sel.isCollapsed || !sel.rangeCount) { hideSelectionAction(); pendingTextSelection = null; return }
+  const quote = String(sel.toString() || '').trim()
+  if (!quote) { hideSelectionAction(); pendingTextSelection = null; return }
+  const range = sel.getRangeAt(0)
+  if (!isSelectableRange(root, range)) { hideSelectionAction(); pendingTextSelection = null; return }
+  const anchor = textAnchorFromRange(doc, root, range, quote, frame)
+  showSelectionAction(m.id, anchor, selectionRect(range, frame), doc)
+}
+function bindSelectionDocument(doc, root, frame, m) {
+  if (!doc || !root) return
+  const schedule = () => {
+    if (selectionTimer) clearTimeout(selectionTimer)
+    selectionTimer = setTimeout(() => { selectionTimer = null; captureDocumentSelection(doc, root, frame, m) }, 120)
+  }
+  ;['selectionchange', 'touchend', 'pointerup', 'mouseup', 'keyup'].forEach((type) => {
+    doc.addEventListener(type, schedule, { passive: true })
+    selectionCleanup.push(() => doc.removeEventListener(type, schedule))
+  })
+}
+function setupTextSelection(root, m) {
+  teardownTextSelection()
+  if (!root || !m) return
+  bindSelectionDocument(document, root, null, m)
+  const frame = root.querySelector('iframe')
+  if (!frame) return
+  activeWebFrame = frame
+  let attachedDoc = null
+  const attachFrame = () => {
+    if (activeWebFrame !== frame) return
+    let doc = null
+    try { doc = frame.contentDocument } catch (e) {}
+    if (doc && doc.body) {
+      if (attachedDoc !== doc) {
+        attachedDoc = doc
+        bindSelectionDocument(doc, doc.body, frame, m)
+      }
+      frame.setAttribute('data-selection-bridge', 'same-origin')
+    } else frame.setAttribute('data-selection-bridge', 'post-message')
+    try { frame.contentWindow.postMessage({ type: 'lofa:review-selection-enable' }, '*') } catch (e) {}
+  }
+  frame.addEventListener('load', attachFrame)
+  selectionCleanup.push(() => frame.removeEventListener('load', attachFrame))
+  setTimeout(attachFrame, 0)
+}
+function onReviewSelectionMessage(event) {
+  const frame = activeWebFrame
+  const data = event && event.data
+  if (!frame || !curMaterial || !data || data.type !== 'lofa:review-selection') return
+  if (event.source !== frame.contentWindow) return
+  const quote = String(data.text_quote != null ? data.text_quote : data.quote || '').trim()
+  if (!quote) return
+  const fr = frame.getBoundingClientRect()
+  const r = data.rect || {}
+  const left = fr.left + (Number(r.left) || 0), top = fr.top + (Number(r.top) || 0)
+  const width = Math.max(0, Number(r.width) || 0), height = Math.max(0, Number(r.height) || 0)
+  const anchor = {
+    type: 'text', quote: quote.slice(0, 1000),
+    prefix: String(data.prefix || '').slice(-160), suffix: String(data.suffix || '').slice(0, 160),
+    selector: String(data.selector || ''), url: String(data.url || frame.getAttribute('src') || event.origin || ''),
+  }
+  if (data.line_start != null || data.line_end != null) {
+    anchor.line = Number(data.line_start != null ? data.line_start : data.line_end)
+    anchor.lineEnd = Number(data.line_end != null ? data.line_end : data.line_start)
+  }
+  showSelectionAction(curMaterial.id, anchor, {
+    left, top, right: left + width, bottom: top + height, width, height,
+  }, null)
+}
+function renderTextNotes(m) {
+  const view = document.getElementById('reviewDetailView'); if (!view) return
+  const old = view.querySelector('#rvTextNotes'); if (old) old.remove()
+  const notes = S.textAnnotations(m)
+  if (!notes.length) return
+  const btn = document.createElement('button')
+  btn.type = 'button'; btn.id = 'rvTextNotes'; btn.className = 'rv-text-notes-btn'
+  btn.textContent = '\u6279\u6ce8 ' + notes.length
+  btn.addEventListener('click', () => {
+    openSheet({
+      id: 'rvTextNotesSheet', title: '\u6587\u5b57\u6279\u6ce8',
+      rows: notes.map((a) => ({
+        type: 'item', html: '<div class="rv-text-note"><blockquote>&ldquo;' + esc(a.anchor.quote) + '&rdquo;</blockquote>' +
+          '<div class="rv-text-note-body">' + esc(a.text || '(\u65e0\u8bf4\u660e)') + '</div>' +
+          '<small>' + esc(a.by || '\u533f\u540d') + (a.at ? ' &middot; ' + esc(String(a.at).replace('T', ' ').slice(0, 16)) : '') + '</small></div>',
+      })),
+    })
+  })
+  view.appendChild(btn)
+}
+
 function renderWeb(c, m) {
   const view = document.getElementById('reviewDetailView')
   if (view) {

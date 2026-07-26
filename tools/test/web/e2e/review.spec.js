@@ -10,7 +10,7 @@ const MATS = [
 
 async function setup(page) {
   const ctx = await baseRoutes(page)
-  const calls = { verdict: [], batch: [] }
+  const calls = { verdict: [], batch: [], comment: [] }
   await page.route(/\/api\/boss-sight\/reviewstage\/_stats/, (r) => json(r, { by_status: { pending: 1, accepted: 1 }, by_tier: { mandatory: 1, important: 1 }, pushed_unread: 1 }))
   await page.route(/\/api\/boss-sight\/reviewstage\?/, (r) => {
     const u = new URL(r.request().url())
@@ -19,6 +19,7 @@ async function setup(page) {
     return json(r, { items })
   })
   await page.route(/\/api\/boss-sight\/reviewstage\/m1\/verdict/, (r) => { calls.verdict.push(r.request().postDataJSON()); return json(r, { ok: true }) })
+  await page.route(/\/api\/boss-sight\/reviewstage\/m1\/comment/, (r) => { calls.comment.push(r.request().postDataJSON()); return json(r, { ok: true }) })
   await page.route(/\/api\/boss-sight\/reviewstage\/m1\/mark_pushed/, (r) => json(r, { ok: true }))
   await page.route(/\/api\/boss-sight\/reviewstage\/m1(\?|$)/, (r) => json(r, MATS[0]))
   await page.route(/\/api\/boss-sight\/reviewstage\/batch_verdict/, (r) => { const b = r.request().postDataJSON(); calls.batch.push(b); return json(r, { changed_count: (b.ids || []).length, changed_ids: b.ids }) })
@@ -98,6 +99,29 @@ test.describe('审阅', () => {
     await expect(page.locator('#toast .lg-toast')).toContainText('已通过')
   })
 
+  test('mobile selection creates an anchored comment payload', async ({ page }) => {
+    const { calls } = await setup(page)
+    await toReview(page)
+    await page.locator('#reviewList .rv-row').first().click()
+    await page.locator('#rvContent p').waitFor()
+    await page.locator('#rvContent p').evaluate((el) => {
+      const range = document.createRange()
+      range.setStart(el.firstChild, 2)
+      range.setEnd(el.firstChild, 6)
+      const selection = window.getSelection()
+      selection.removeAllRanges()
+      selection.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await expect(page.locator('#rvSelectionComment')).toBeVisible()
+    await page.locator('#rvSelectionComment').click()
+    await page.locator('.lg-modal-in').fill('Mobile quote note')
+    await page.locator('.lg-modal-ok').click()
+    await until(() => calls.comment.length)
+    expect(calls.comment[0].target.text_quote).toBe('正文内容')
+    expect(calls.comment[0].target.prefix).toBe('这是')
+  })
+
   test('多选批量:选择 → 全选 → 批量通过(POST)', async ({ page }) => {
     const { calls } = await setup(page)
     await toReview(page)
@@ -164,5 +188,20 @@ test.describe('审阅', () => {
 
     await page.keyboard.press('Escape')
     await expect(page.locator('body')).not.toHaveClass(/review-immersive-active/)
+
+    let webComment = null
+    await page.route(/\/api\/boss-sight\/reviewstage\/mweb\/comment/, (r) => { webComment = r.request().postDataJSON(); return json(r, { ok: true }) })
+    await frame.contentFrame().locator('#demo').evaluate((el) => {
+      const range = document.createRange(); range.selectNodeContents(el)
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+    await expect(page.locator('#rvSelectionComment')).toBeVisible()
+    await page.locator('#rvSelectionComment').click()
+    await page.locator('.lg-modal-in').fill('Web selection note')
+    await page.locator('.lg-modal-ok').click()
+    await until(() => webComment)
+    expect(webComment.target.text_quote).toBe('Demo material')
+    expect(webComment.target.selector).toBe('#demo')
   })
 })

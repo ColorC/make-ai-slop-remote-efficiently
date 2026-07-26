@@ -70,6 +70,7 @@ const DETAIL = {
   },
   'm-video': { id: 'm-video', kind: 'video', tier: 'processual', status: 'pending', title: '视频材料' },
   'm-text': { id: 'm-text', kind: 'markdown', tier: 'processual', status: 'pending', title: '纯文本', inline_content: '没有批注的内容' },
+  'm-text-note': { id: 'm-text-note', kind: 'markdown', tier: 'processual', status: 'pending', title: 'Text note', inline_content: 'Selectable saved text', comments: [{ id: 'ct1', author: 'mobile', content: 'Needs revision', target: { text_quote: 'saved text', prefix: 'Selectable ', suffix: '' } }] },
   'm-kq': {
     id: 'm-kq', kind: 'key_question', tier: 'mandatory', status: 'pending', title: '关键问题材料',
     inline_content: JSON.stringify({ question: '选 A 还是 B?', options: ['方案 A', '方案 B'], explanation: 'A 更稳' }),
@@ -134,6 +135,17 @@ function finishPushAnim() {
 function finishPopAnim() {
   const el = document.querySelector('.view.anim-out')
   if (el) el.dispatchEvent(new Event('animationend'))
+}
+function selectNodeText(node, start = 0, end = null, doc = document) {
+  const text = node.firstChild
+  const range = doc.createRange()
+  range.setStart(text, start)
+  range.setEnd(text, end == null ? text.nodeValue.length : end)
+  const selection = doc.defaultView.getSelection()
+  selection.removeAllRanges()
+  selection.addRange(range)
+  doc.dispatchEvent(new Event('selectionchange'))
+  return { range, selection }
 }
 
 beforeEach(async () => {
@@ -230,6 +242,71 @@ describe('搜索(前端过滤标题,不发新请求)', () => {
     await vi.waitFor(() => expect($$('#reviewList .rv-row').length).toBe(1))
     expect($('#reviewList .rv-row').getAttribute('data-id')).toBe('m-tpl')
     expect(listCalls().length).toBe(before)   // 纯前端过滤, 不重新请求
+  })
+})
+
+describe('mobile text selection comments', () => {
+  it('creates a Markdown quote+line target from the selected text', async () => {
+    await review.openDetail('m-md')
+    await vi.waitFor(() => expect($('.rv-mdline[data-line="2"] .tx')).toBeTruthy())
+    selectNodeText($('.rv-mdline[data-line="2"] .tx'), 0, 5)
+    await vi.waitFor(() => expect($('#rvSelectionComment')).toBeTruthy())
+    expect($('#rvSelectionComment').textContent).toBe('\u8bc4\u8bba\u9009\u4e2d\u5185\u5bb9')
+    $('#rvSelectionComment').click()
+    await vi.waitFor(() => expect($('.lg-modal-in')).toBeTruthy())
+    $('.lg-modal-in').value = 'Selected passage note'
+    $('.lg-modal-ok').click()
+    await vi.waitFor(() => {
+      const c = calls.find((x) => x.method === 'POST' && x.url.endsWith('/m-md/comment'))
+      expect(c.body.target).toMatchObject({ text_quote: '\u7b2c\u4e8c\u884c\u9700\u6539', line_start: 2, line_end: 2 })
+      expect(c.body.target.prefix).toContain('\u7b2c\u4e00\u884c')
+    })
+  })
+
+  it('ignores collapsed selections and removes the action when leaving detail', async () => {
+    await review.openDetail('m-text')
+    await vi.waitFor(() => expect($('.rv-md p')).toBeTruthy())
+    const node = $('.rv-md p').firstChild
+    const range = document.createRange(); range.setStart(node, 1); range.collapse(true)
+    const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    await new Promise((r) => setTimeout(r, 180))
+    expect($('#rvSelectionComment')).toBeNull()
+
+    selectNodeText($('.rv-md p'), 0, 4)
+    await vi.waitFor(() => expect($('#rvSelectionComment')).toBeTruthy())
+    $('#reviewDetailView .lg-nav-back').click()
+    expect($('#rvSelectionComment')).toBeNull()
+  })
+
+  it('captures text selected inside a same-origin web iframe', async () => {
+    await review.openDetail('m-html')
+    await vi.waitFor(() => expect($('.rv-web iframe')).toBeTruthy())
+    const frame = $('.rv-web iframe')
+    const doc = frame.contentDocument
+    doc.open(); doc.write('<!doctype html><html><body><p id="web-copy">Web selectable copy</p></body></html>'); doc.close()
+    frame.dispatchEvent(new Event('load'))
+    await new Promise((r) => setTimeout(r, 0))
+    selectNodeText(doc.getElementById('web-copy'), 0, 14, doc)
+    await vi.waitFor(() => expect($('#rvSelectionComment')).toBeTruthy())
+    $('#rvSelectionComment').click()
+    await vi.waitFor(() => expect($('.lg-modal-in')).toBeTruthy())
+    $('.lg-modal-in').value = 'Web quote note'
+    $('.lg-modal-ok').click()
+    await vi.waitFor(() => {
+      const c = calls.find((x) => x.method === 'POST' && x.url.endsWith('/m-html/comment'))
+      expect(c.body.target).toMatchObject({ text_quote: 'Web selectable', selector: '#web-copy', url: 'http://test/live/m-html' })
+    })
+  })
+
+  it('keeps saved text anchors visible through a compact notes sheet', async () => {
+    await review.openDetail('m-text-note')
+    await vi.waitFor(() => expect($('#rvTextNotes')).toBeTruthy())
+    expect($('#rvTextNotes').textContent).toBe('\u6279\u6ce8 1')
+    $('#rvTextNotes').click()
+    await vi.waitFor(() => expect($('#rvTextNotesSheet')).toBeTruthy())
+    expect($('#rvTextNotesSheet').textContent).toContain('saved text')
+    expect($('#rvTextNotesSheet').textContent).toContain('Needs revision')
   })
 })
 

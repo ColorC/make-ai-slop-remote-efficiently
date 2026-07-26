@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import Ajv from 'ajv'
 import {
-  statsBadges, extractAnnotations, imageAnnotations, markdownAnnotations, plainComments,
+  statsBadges, extractAnnotations, imageAnnotations, markdownAnnotations, textAnnotations, plainComments,
   templateFallbackCard, buildBatchVerdictPayload, buildBatchDeletePayload, buildCommentPayload,
   isReviewEvent, reviewEventId, imageAnchorToScreen, buildMarkdownLines, parseKeyQuestion,
   summarizeBatch,
@@ -47,6 +47,10 @@ const MD_MATERIAL = {
   ],
 }
 // image: AI 批注在 annotations[], target={x,y} 点 / {x,y,w,h} 框(无 type)。
+const TEXT_MATERIAL = {
+  id: 'mt', kind: 'markdown', tier: 'important', status: 'pending', title: 'Text quote', inline_content: 'alpha selected omega',
+  comments: [{ id: 'ct', author: 'mobile', content: 'Revise this', target: { text_quote: 'selected', prefix: 'alpha ', suffix: ' omega', line_start: 1, line_end: 1 } }],
+}
 const IMG_MATERIAL = {
   id: 'm2', kind: 'image', tier: 'important', status: 'pending', title: '截图',
   annotations: [
@@ -82,6 +86,15 @@ describe('/_stats 角标 schema', () => {
 
 describe('material schema(评论/批注 content+author+target)', () => {
   it('markdown material + 行批注(target.line_start)', () => { expect(v('material')(MD_MATERIAL)).toBe(true) })
+  it('text quote target is normalized, bucketed, and round-trips in comment payload', () => {
+    const notes = textAnnotations(TEXT_MATERIAL)
+    expect(notes).toHaveLength(1)
+    expect(notes[0].anchor).toMatchObject({ type: 'text', quote: 'selected', prefix: 'alpha ', suffix: ' omega', line: 1, lineEnd: 1 })
+    expect(markdownAnnotations(TEXT_MATERIAL).map((a) => a.id)).toEqual(['ct'])
+    const payload = buildCommentPayload('Revise this', { anchor: notes[0].anchor })
+    expect(payload.target).toMatchObject({ text_quote: 'selected', prefix: 'alpha ', suffix: ' omega', line_start: 1, line_end: 1 })
+    expect(v('commentRequest')(payload)).toBe(true)
+  })
   it('image material + 点/框批注(target.x/y[/w/h])', () => { expect(v('material')(IMG_MATERIAL)).toBe(true) })
   it('key_question material(inline_content 是 JSON 字符串)', () => { expect(v('material')(KQ_MATERIAL)).toBe(true) })
   it('custom_web_template 专项 schema(extra.template/live_url)', () => {

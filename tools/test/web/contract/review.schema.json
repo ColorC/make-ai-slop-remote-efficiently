@@ -13,6 +13,10 @@
         "h": { "type": "number" },
         "line_start": { "type": "number" },
         "line_end": { "type": "number" },
+        "text_quote": { "type": "string" },
+        "prefix": { "type": "string" },
+        "suffix": { "type": "string" },
+        "url": { "type": "string" },
         "selector": { "type": "string" },
         "question_index": { "type": "number" }
       },

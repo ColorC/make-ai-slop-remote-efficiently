@@ -312,6 +312,24 @@ export function parseKeyQuestion(content) {
 // 据字段推断类型, 绝不要求 target.type。
 export function normAnchor(t) {
   if (!t || typeof t !== 'object') return null
+  // Text selection: quote/context works for Markdown and web; Markdown may also retain line numbers.
+  const textQuote = t.text_quote != null ? t.text_quote : t.quote
+  if (textQuote != null && String(textQuote).trim()) {
+    const a = {
+      type: 'text',
+      quote: String(textQuote),
+      prefix: String(t.prefix == null ? '' : t.prefix),
+      suffix: String(t.suffix == null ? '' : t.suffix),
+      selector: String(t.selector == null ? '' : t.selector),
+      url: String(t.url == null ? '' : t.url),
+    }
+    if (t.line_start != null || t.line_end != null) {
+      a.line = clampPositiveInt(t.line_start != null ? t.line_start : t.line_end, 1)
+      const end = clampPositiveInt(t.line_end != null ? t.line_end : t.line_start, a.line)
+      a.lineEnd = Math.max(a.line, end)
+    }
+    return a
+  }
   // markdown 行号: line_start / line_end(后端真实键)
   if (t.line_start != null || t.line_end != null) {
     const line = clampPositiveInt(t.line_start != null ? t.line_start : t.line_end, 1)
@@ -335,6 +353,20 @@ export function anchorToTarget(anchor) {
     const s = clampPositiveInt(anchor.line, 1)
     const e = clampPositiveInt(anchor.lineEnd != null ? anchor.lineEnd : anchor.line, s)
     return { line_start: s, line_end: Math.max(s, e) }
+  }
+  if (anchor.type === 'text') {
+    const target = { text_quote: String(anchor.quote == null ? '' : anchor.quote) }
+    if (anchor.prefix) target.prefix = String(anchor.prefix)
+    if (anchor.suffix) target.suffix = String(anchor.suffix)
+    if (anchor.selector) target.selector = String(anchor.selector)
+    if (anchor.url) target.url = String(anchor.url)
+    if (anchor.line != null || anchor.lineEnd != null) {
+      const s = clampPositiveInt(anchor.line != null ? anchor.line : anchor.lineEnd, 1)
+      const e = clampPositiveInt(anchor.lineEnd != null ? anchor.lineEnd : anchor.line, s)
+      target.line_start = s
+      target.line_end = Math.max(s, e)
+    }
+    return target
   }
   if (anchor.type === 'rect') {
     return { x: clamp01(anchor.x), y: clamp01(anchor.y), w: clamp01(anchor.w), h: clamp01(anchor.h) }
@@ -369,7 +401,10 @@ export function imageAnnotations(m) {
   return extractAnnotations(m).filter((a) => a.anchor && (a.anchor.type === 'point' || a.anchor.type === 'rect'))
 }
 export function markdownAnnotations(m) {
-  return extractAnnotations(m).filter((a) => a.anchor && a.anchor.type === 'line')
+  return extractAnnotations(m).filter((a) => a.anchor && (a.anchor.type === 'line' || (a.anchor.type === 'text' && a.anchor.line)))
+}
+export function textAnnotations(m) {
+  return extractAnnotations(m).filter((a) => a.anchor && a.anchor.type === 'text')
 }
 export function plainComments(m) {
   return extractAnnotations(m).filter((a) => !a.anchor)
@@ -411,7 +446,7 @@ export function buildMarkdownLines(content, annotations) {
   const lines = String(content == null ? '' : content).split(/\r?\n/)
   const byLine = {}
   ;(annotations || []).forEach((a) => {
-    if (!a || !a.anchor || a.anchor.type !== 'line') return
+    if (!a || !a.anchor || (a.anchor.type !== 'line' && !(a.anchor.type === 'text' && a.anchor.line))) return
     const s = clampLine(a.anchor.line, lines.length)
     const e = clampLine(a.anchor.lineEnd || a.anchor.line, lines.length)
     for (let n = s; n <= e; n++) { (byLine[n] = byLine[n] || []).push(a) }
