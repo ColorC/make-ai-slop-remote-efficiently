@@ -7,7 +7,7 @@
 import { openModal, openSheet, banner } from './ui.js'
 
 export const LS_KEY = 'lofa.baseUrl'
-export const DEFAULT_BASE = 'https://10.3.43.246:12443'   // 唯一对外端口(Caddy HTTPS)
+export const DEFAULT_BASE = location.origin || 'https://localhost:12443'   // 默认同源; 跨机访问时改为 PC 的 LAN IP
 
 // 连接态单例。code = 主机 /lofa-config.json 下发的代码面板配置。update = OTA 待装清单。
 export const store = { base: null, code: null, update: null }
