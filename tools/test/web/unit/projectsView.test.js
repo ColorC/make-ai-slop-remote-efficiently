@@ -143,8 +143,15 @@ describe('列表段(默认)', () => {
     expect(link.textContent).toContain('看板')
     link.click()
     await vi.waitFor(() => expect($('browserView').classList.contains('show')).toBe(true))
-    // http://localhost:8210/ → 主机名换成 store.base 主机, 端口保留
-    expect($('browserView').querySelector('iframe').getAttribute('src')).toBe('http://test:8210/')
+    // LOFA only hosts Dashboard; target URLs are forwarded into Dashboard-owned tabs.
+    const frame = $('browserView').querySelector('iframe')
+    expect(frame.getAttribute('src')).toBe('http://test/?lofaRemoteWeb=1')
+    const post = vi.spyOn(frame.contentWindow, 'postMessage')
+    frame.dispatchEvent(new Event('load'))
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'omni:open-web-tab', url: 'http://test:8210/' }),
+      'http://test',
+    )
   })
 
   it('筛选 pill 在列表段隐藏(状态筛选只属任务/计划)', async () => {
@@ -178,7 +185,14 @@ describe('应用段(真启动器)', () => {
     const cell = Array.prototype.find.call($('projectsApps').querySelectorAll('.proj-app'), (c) => c.textContent.includes('行者 demo'))
     cell.click()
     await vi.waitFor(() => expect($('browserView').classList.contains('show')).toBe(true))
-    expect($('browserView').querySelector('iframe').getAttribute('src')).toBe('http://test/walker-game/')
+    const frame = $('browserView').querySelector('iframe')
+    expect(frame.getAttribute('src')).toBe('http://test/?lofaRemoteWeb=1')
+    const post = vi.spyOn(frame.contentWindow, 'postMessage')
+    frame.dispatchEvent(new Event('load'))
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'omni:open-web-tab', url: 'http://test/walker-game/' }),
+      'http://test',
+    )
   })
 
   it('app 图标:icon_url 渲染成图标(img,拼 base), 无则回退 emoji', async () => {

@@ -1,20 +1,20 @@
-// browserView.js - LOFA remote web workspace with Dashboard-managed tabs.
-// Android MainActivity converts target=_blank/window.open popups into lofa:new-window events.
+// browserView.js - chrome-free LOFA host for the Omnicompany Dashboard.
+// Dashboard owns the only visible tab strip. Android popup events are forwarded into it.
 
 import { store, toast } from './core.js'
-import { icons } from './ui.js'
 import * as router from './router.js'
 
-const state = { tabs: [], activeId: '', seq: 0 }
 let view = null
-let tabsHost = null
-let pagesHost = null
+let dashboardFrame = null
+let dashboardLoaded = false
 let initialized = false
+let dashboardUrl = ''
+const pendingTabs = []
 
-function resolveWebUrl(value) {
+function resolveWebUrl(value, baseOverride) {
   let url = String(value == null ? '' : value).trim()
   if (!url) return ''
-  const base = (store.base || '').replace(/\/+$/, '')
+  const base = (baseOverride || store.base || '').replace(/\/+$/, '')
   if (url.charAt(0) === '/') return base + url
   const local = url.match(/^(https?:)\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i)
   if (local) {
@@ -29,80 +29,116 @@ function resolveWebUrl(value) {
   } catch (e) { return '' }
 }
 
+function isPrivateHostname(hostname) {
+  const host = String(hostname || '').toLowerCase()
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true
+  if (host === '::1' || host.startsWith('127.')) return true
+  const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!match) return false
+  const octets = match.slice(1).map(Number)
+  if (octets.some((value) => value < 0 || value > 255)) return false
+  return octets[0] === 10 ||
+    octets[0] === 127 ||
+    (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+    (octets[0] === 192 && octets[1] === 168)
+}
+
+export function isInternalWebUrl(value, baseOverride) {
+  const baseValue = baseOverride || store.base || window.location.href
+  const resolved = resolveWebUrl(value, baseValue)
+  if (!resolved) return false
+  try {
+    const target = new URL(resolved)
+    const base = new URL(resolveWebUrl(baseValue, baseValue) || baseValue)
+    return target.origin === base.origin ||
+      target.hostname === base.hostname ||
+      (isPrivateHostname(target.hostname) && isPrivateHostname(base.hostname))
+  } catch (e) { return false }
+}
+
+function isDashboardRootUrl(value) {
+  try {
+    const target = new URL(resolveWebUrl(value))
+    const base = new URL(resolveWebUrl((store.base || '').replace(/\/+$/, '') + '/'))
+    return target.origin === base.origin &&
+      target.pathname.replace(/\/+$/, '') === base.pathname.replace(/\/+$/, '') &&
+      !target.searchParams.has('open_type') &&
+      !target.searchParams.has('surface')
+  } catch (e) { return false }
+}
+
+export async function openExternalBrowser(url) {
+  const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.ExternalBrowser
+  if (plugin && typeof plugin.open === 'function') {
+    try {
+      await plugin.open({ url })
+      return true
+    } catch (e) {
+      toast('\u65e0\u6cd5\u6253\u5f00\u5916\u90e8\u6d4f\u89c8\u5668')
+      return false
+    }
+  }
+  const native = Boolean(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' &&
+    window.Capacitor.isNativePlatform())
+  if (native) {
+    toast('\u5f53\u524d LOFA \u7248\u672c\u4e0d\u652f\u6301\u5916\u90e8\u6d4f\u89c8\u5668\uff0c\u8bf7\u5347\u7ea7')
+    return false
+  }
+  window.open(url, '_blank', 'noopener,noreferrer')
+  return true
+}
+
 function titleFor(url, title) {
   const named = String(title || '').trim()
   if (named) return named
   try { return new URL(url).hostname || '\u7f51\u9875' } catch (e) { return '\u7f51\u9875' }
 }
 
-function tabById(id) { return state.tabs.find((tab) => tab.id === id) || null }
-
-function setActive(id) {
-  if (!tabById(id)) return
-  state.activeId = id
-  renderTabs()
-  state.tabs.forEach((tab) => {
-    tab.frame.classList.toggle('active', tab.id === id)
-    tab.frame.setAttribute('aria-hidden', tab.id === id ? 'false' : 'true')
-  })
+function connectedDashboardUrl() {
+  const base = (store.base || '').replace(/\/+$/, '') + '/'
+  try {
+    const url = new URL(base)
+    url.searchParams.set('lofaRemoteWeb', '1')
+    return url.href
+  } catch (e) { return base + '?lofaRemoteWeb=1' }
 }
 
-function closeTab(id) {
-  const index = state.tabs.findIndex((tab) => tab.id === id)
-  if (index < 0) return
-  const wasActive = state.activeId === id
-  const removed = state.tabs.splice(index, 1)[0]
-  try { removed.frame.remove() } catch (e) {}
-  if (!state.tabs.length) {
-    state.activeId = ''
-    renderTabs()
-    router.pop()
-    return
+function dashboardOrigin() {
+  try { return new URL(dashboardUrl).origin } catch (e) { return '*' }
+}
+
+function postTab(request) {
+  if (!dashboardFrame || !dashboardLoaded || !dashboardFrame.contentWindow) {
+    pendingTabs.push(request)
+    return false
   }
-  if (wasActive) setActive(state.tabs[Math.min(index, state.tabs.length - 1)].id)
-  else renderTabs()
+  try {
+    dashboardFrame.contentWindow.postMessage(request, dashboardOrigin())
+    return true
+  } catch (e) {
+    pendingTabs.push(request)
+    return false
+  }
 }
 
-function renderTabs() {
-  if (!tabsHost) return
-  tabsHost.innerHTML = ''
-  state.tabs.forEach((tab) => {
-    const button = document.createElement('button')
-    button.className = 'browser-tab' + (tab.id === state.activeId ? ' active' : '')
-    button.type = 'button'
-    button.setAttribute('role', 'tab')
-    button.setAttribute('aria-selected', tab.id === state.activeId ? 'true' : 'false')
-    button.title = tab.url
-
-    const label = document.createElement('span')
-    label.className = 'browser-tab-title'
-    label.textContent = tab.title
-    button.appendChild(label)
-
-    const close = document.createElement('span')
-    close.className = 'browser-tab-close'
-    close.setAttribute('role', 'button')
-    close.setAttribute('aria-label', '\u5173\u95ed ' + tab.title)
-    close.innerHTML = icons.close
-    close.addEventListener('click', (event) => { event.stopPropagation(); closeTab(tab.id) })
-    button.appendChild(close)
-
-    button.addEventListener('click', () => setActive(tab.id))
-    tabsHost.appendChild(button)
-  })
-  const active = tabsHost.querySelector('.browser-tab.active')
-  if (active && active.scrollIntoView) active.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+function flushPendingTabs() {
+  if (!dashboardLoaded || !dashboardFrame || !dashboardFrame.contentWindow) return
+  while (pendingTabs.length) {
+    const request = pendingTabs.shift()
+    try { dashboardFrame.contentWindow.postMessage(request, dashboardOrigin()) } catch (e) { pendingTabs.unshift(request); break }
+  }
 }
 
 function attachSameOriginPopupFallback(frame) {
   try {
     const doc = frame.contentDocument
     const win = frame.contentWindow
-    if (!doc || !win || doc.documentElement.dataset.lofaPopupBridge === '1') return
+    if (!doc || !win || doc.documentElement.dataset.omniWebTabHost === '1') return
+    if (doc.documentElement.dataset.lofaPopupBridge === '1') return
     doc.documentElement.dataset.lofaPopupBridge = '1'
     doc.addEventListener('click', (event) => {
       const anchor = event.target && event.target.closest ? event.target.closest('a[target="_blank"]') : null
-      if (!anchor || !anchor.href) return
+      if (!anchor || !anchor.href || anchor.hasAttribute('download')) return
       event.preventDefault()
       openWeb(anchor.href, anchor.textContent || '')
     }, true)
@@ -112,33 +148,20 @@ function attachSameOriginPopupFallback(frame) {
       return originalOpen ? originalOpen.apply(win, arguments) : null
     }
   } catch (e) {
-    // Cross-origin iframe access is blocked in JS; Android WebChromeClient handles its popup.
+    // Cross-origin popups are converted to lofa:new-window by Android WebChromeClient.
   }
 }
 
-function createTab(url, title) {
-  const id = 'browser-' + (++state.seq)
-  const frame = document.createElement('iframe')
-  frame.className = 'browser-frame'
-  frame.title = title
-  frame.name = id
-  frame.allow = 'clipboard-read; clipboard-write; fullscreen; camera; microphone'
-  frame.referrerPolicy = 'no-referrer'
-  frame.src = url
-  frame.setAttribute('aria-hidden', 'true')
-  frame.addEventListener('load', () => {
-    attachSameOriginPopupFallback(frame)
-    try {
-      const pageTitle = frame.contentDocument && frame.contentDocument.title
-      const tab = tabById(id)
-      if (tab && pageTitle) { tab.title = pageTitle; renderTabs() }
-    } catch (e) {}
-  })
-  pagesHost.appendChild(frame)
-  const tab = { id, url, title, frame }
-  state.tabs.push(tab)
-  setActive(id)
-  return tab
+function ensureDashboardFrame() {
+  init()
+  const nextUrl = connectedDashboardUrl()
+  if (!dashboardFrame) return null
+  if (dashboardUrl !== nextUrl) {
+    dashboardUrl = nextUrl
+    dashboardLoaded = false
+    dashboardFrame.src = dashboardUrl
+  }
+  return dashboardFrame
 }
 
 export function init() {
@@ -148,24 +171,21 @@ export function init() {
   if (!view) return
   view.innerHTML =
     '<div class="browser-shell">' +
-      '<header class="browser-chrome">' +
-        '<button class="browser-control browser-exit" type="button" aria-label="\u8fd4\u56de Dashboard">' + icons.back + '</button>' +
-        '<div class="browser-tabs" role="tablist" aria-label="\u7f51\u9875\u9875\u7b7e"></div>' +
-        '<button class="browser-control browser-new" type="button" aria-label="\u6253\u5f00\u8fdc\u7a0b\u7f51\u9875\u9996\u9875">' + icons.plus + '</button>' +
-      '</header>' +
-      '<div class="browser-pages"></div>' +
+      '<iframe class="browser-frame" title="Omnicompany Dashboard" allow="clipboard-read; clipboard-write; fullscreen; camera; microphone" referrerpolicy="no-referrer"></iframe>' +
     '</div>'
-  tabsHost = view.querySelector('.browser-tabs')
-  pagesHost = view.querySelector('.browser-pages')
-  view.querySelector('.browser-exit').addEventListener('click', () => router.pop())
-  view.querySelector('.browser-new').addEventListener('click', () => openHome())
+  dashboardFrame = view.querySelector('.browser-frame')
+  dashboardFrame.addEventListener('load', () => {
+    dashboardLoaded = true
+    attachSameOriginPopupFallback(dashboardFrame)
+    flushPendingTabs()
+  })
 
   window.addEventListener('lofa:new-window', (event) => {
     const detail = (event && event.detail) || {}
     if (detail.url) openWeb(detail.url, detail.title || '')
   })
 
-  // Browser preview fallback for target=_blank links in the LOFA top document.
+  // Links opened by LOFA surfaces also enter the Dashboard's internal tab strip.
   document.addEventListener('click', (event) => {
     const anchor = event.target && event.target.closest ? event.target.closest('a[target="_blank"]') : null
     if (!anchor || !anchor.href || (view && view.contains(anchor))) return
@@ -176,20 +196,24 @@ export function init() {
 
 export function openWeb(value, title) {
   if (!store.base) { toast('\u672a\u8fde\u63a5'); return }
-  init()
   const url = resolveWebUrl(value)
   if (!url) { toast('\u5730\u5740\u65e0\u6548'); return }
-  createTab(url, titleFor(url, title))
+  if (!isInternalWebUrl(url)) {
+    void openExternalBrowser(url)
+    return 'external'
+  }
+  ensureDashboardFrame()
   router.push('browserView')
+
+  if (!isDashboardRootUrl(url)) {
+    postTab({ type: 'omni:open-web-tab', url, title: titleFor(url, title) })
+    return 'tab'
+  }
+  return 'home'
 }
 
 export async function openHome() {
   if (!store.base) { toast('\u672a\u8fde\u63a5'); return }
-  init()
-  // Remote web mode replaces the old VSCode-specific home. Start at the connected Dashboard root.
-  const url = store.base.replace(/\/+$/, '') + '/'
-  const existing = state.tabs.find((tab) => tab.url === url)
-  if (existing) setActive(existing.id)
-  else createTab(url, '\u8fdc\u7a0b\u7f51\u9875')
+  ensureDashboardFrame()
   router.push('browserView')
 }

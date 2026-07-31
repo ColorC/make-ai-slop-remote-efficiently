@@ -3,7 +3,7 @@
 > 2026-06-27 由 grounding 核实(读 normalized_protocol.py / chat.py / ccChatClient.ts / ChatMessage/ChatPanel/ToolCallCard.tsx / reviewstage/authored/projects/plans 路由)。配 plan.md。**这是契约参考,不是状态**。交付物 = `lofa/app/www/index.html` 单文件补齐,对齐电脑端真实行为,不自创。
 
 ## 0. 交付物 & 平台(铁律)
-- 改的是 **`E:/WindowsWorkspace/lofa/app/www/index.html`**(Capacitor 壳 + 单文件 vanilla JS)。不是后端、不是新网页、不造内容层大门面。
+- 改的是 **`app/www/index.html`**(Capacitor 壳 + 单文件 vanilla JS)。不是后端、不是新网页、不造内容层大门面。
 - 帧渲染**严格按归一化协议 kind 判别**(下表)。**绝不照 chat.py 文档里的原始 SDK 帧**(`kind:assistant/system/result` 是 SDK 原始帧,已被 ccdaemon 归一化掉;写成 `kind:assistant` 会无返回——计划点名的坑)。
 - 真机/Maestro 验收需用户手机;AI 自动验收用 **Playwright 驱动真实 www 页**(对真后端 8210)+ 后端契约测试,绝不用裸 API 探针冒充 UI 验证。
 

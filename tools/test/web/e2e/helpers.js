@@ -92,7 +92,7 @@ export async function installChatWs(page) {
 // PTY WS mock {type:snapshot/output/exit} 往返。
 export async function installPtyWs(page) {
   const state = { ws: null, sent: [] }
-  await page.routeWebSocket(/\/api\/cc\/sessions\/[^/]+\/ws$/, (ws) => {
+  await page.routeWebSocket(/\/api\/cc\/sessions\/[^/]+\/ws(?:\?.*)?$/, (ws) => {
     state.ws = ws
     ws.onMessage((m) => { try { state.sent.push(JSON.parse(m)) } catch (e) { state.sent.push(m) } })
   })

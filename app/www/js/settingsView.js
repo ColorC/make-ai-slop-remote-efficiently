@@ -153,11 +153,11 @@ function setStatus(msg, cls) {
 function doConnect(base) {
   base = normBase(base)
   setStatus('连接中…', '')
-  connect(base, () => {
+  connect(base, async () => {
+    if (_onConnected) await _onConnected()
     setStatus('已连接 ' + hostLabel(), 'ok')
     render()
     if (router.current() === 'connectView') router.pop()
-    if (_onConnected) _onConnected()
   }, (msg) => {
     setStatus('连不上 ' + base + '\n' + msg, 'bad')
     render()

@@ -55,7 +55,7 @@ async function execCommand(cmd) {
       await checkUpdate()
       return { checked: true }
     case 'ota_install':
-      doUpdate()
+      await doUpdate()
       return { started: true }
     default:
       return { error: 'unknown_op:' + op }
@@ -83,18 +83,20 @@ async function poll() {
 }
 
 // 连接成功后启动: 先登记(带 device_id, 让本机知道这台在线), 再起轮询。
-export function startRemote() {
+export async function startRemote() {
   if (_timer) return
-  try { apiJson('/api/android/register', 'POST', { device_id: deviceId() }) } catch (e) {}
-  try {
-    const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.DeviceAutomation
-    if (A) {
+  const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.DeviceAutomation
+  if (A) {
+    try {
       const controlBase = automationControlBase(store.base)
-      A.configure({ baseUrl: controlBase, deviceId: deviceId() })
-        .then((r) => LOG.rec('info', ['device-automation.configure', controlBase, r]))
-        .catch((e) => LOG.rec('error', ['device-automation.configure.fail', e.message || e]))
+      const result = await A.configure({ baseUrl: controlBase, deviceId: deviceId() })
+      LOG.rec('info', ['device-automation.configure', controlBase, result])
+    } catch (e) {
+      LOG.rec('error', ['device-automation.configure.fail', e.message || e])
+      throw e
     }
-  } catch (e) { LOG.rec('error', ['device-automation.configure.fail', e.message || e]) }
+  }
+  try { await apiJson('/api/android/register', 'POST', { device_id: deviceId() }) } catch (e) {}
   poll()
   _timer = setInterval(poll, 3000)
   LOG.rec('info', ['remote.start', deviceId()])

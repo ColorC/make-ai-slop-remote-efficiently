@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { automationControlBase } from '../../../../app/www/js/remoteState.js'
 
 describe('automationControlBase', () => {
-  it('separates the native control plane from the public HTTPS gateway', () => {
+  it('keeps native automation on the authenticated HTTPS gateway', () => {
     expect(automationControlBase('https://10.3.43.246:12443'))
-      .toBe('http://10.3.43.246:8210')
+      .toBe('https://10.3.43.246:12443')
     expect(automationControlBase('https://lofa.example:12443/'))
-      .toBe('http://lofa.example:8210')
+      .toBe('https://lofa.example:12443')
   })
 
   it('keeps unrelated origins unchanged and trims trailing slashes', () => {

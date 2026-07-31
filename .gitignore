@@ -37,6 +37,9 @@ tools/test/web/_probe.mjs
 .env.*
 !.env.example
 
+# --- captured artifacts (本地抓取物料: 截图 / APK / live API dump, 不进 git) ---
+artifacts/
+
 # --- OS ---
 .DS_Store
 Thumbs.db

@@ -90,7 +90,9 @@ test.describe('项目双视图', () => {
     await page.locator('#projectsBoardSeg button[data-v="apps"]').click()
     await page.locator('#projectsApps .proj-app', { hasText: '行者 demo' }).click()
     await expect(page.locator('#browserView')).toHaveClass(/show/)
-    await expect(page.locator('#browserView iframe')).toHaveAttribute('src', 'https://localhost:5599/walker-game/')
+    await expect(page.locator('#browserView iframe')).toHaveAttribute('src', 'https://localhost:5599/?lofaRemoteWeb=1')
+    await expect(page.locator('.browser-chrome')).toHaveCount(0)
+    await expect(page.locator('.browser-tab')).toHaveCount(0)
   })
 
   test('列表段快速入口:点项目 links 打开网页(localhost 主机替换)', async ({ page }) => {
@@ -98,7 +100,9 @@ test.describe('项目双视图', () => {
     await toProjects(page)
     await page.locator('#projectsList .proj-item', { hasText: '项目甲' }).locator('.proj-link', { hasText: '看板' }).click()
     await expect(page.locator('#browserView')).toHaveClass(/show/)
-    await expect(page.locator('#browserView iframe')).toHaveAttribute('src', 'http://localhost:8210/')
+    await expect(page.locator('#browserView iframe')).toHaveAttribute('src', 'https://localhost:5599/?lofaRemoteWeb=1')
+    await expect(page.locator('.browser-chrome')).toHaveCount(0)
+    await expect(page.locator('.browser-tab')).toHaveCount(0)
   })
 
   test('列表段分组头可折叠', async ({ page }) => {

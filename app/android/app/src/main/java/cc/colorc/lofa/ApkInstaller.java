@@ -22,11 +22,13 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Downloads a verified self-update and submits it through PackageInstaller. */
 @CapacitorPlugin(name = "ApkInstaller")
 public final class ApkInstaller extends Plugin {
     static final String INSTALL_PREFS = "lofa.install.status";
+    private final AtomicBoolean updateInProgress = new AtomicBoolean(false);
 
     @PluginMethod
     public void canInstall(PluginCall call) {
@@ -76,16 +78,23 @@ public final class ApkInstaller extends Plugin {
             call.reject("url and sha256 are required");
             return;
         }
+        if (!updateInProgress.compareAndSet(false, true)) {
+            call.reject("update already in progress");
+            return;
+        }
         new Thread(() -> {
+            File apk = new File(getContext().getCacheDir(), "lofa-update.apk");
             try {
-                File apk = new File(getContext().getCacheDir(), "lofa-update.apk");
                 if (apk.exists() && !apk.delete()) throw new IllegalStateException("stale update cannot be replaced");
                 long bytes = download(url, apk);
                 if (bytes < 1000) throw new IllegalStateException("APK is too small: " + bytes);
                 String actualSha256 = sha256(apk);
                 if (!expectedSha256.equals(actualSha256)) {
                     if (!apk.delete()) apk.deleteOnExit();
-                    throw new IllegalStateException("APK checksum mismatch");
+                    throw new IllegalStateException(
+                            "APK checksum mismatch (expected " + expectedSha256
+                                    + ", actual " + actualSha256 + ", bytes " + bytes + ")"
+                    );
                 }
                 int sessionId = submitInstall(apk);
                 JSObject result = new JSObject();
@@ -96,6 +105,8 @@ public final class ApkInstaller extends Plugin {
                 call.resolve(result);
             } catch (Exception exception) {
                 call.reject("update: " + exception.getMessage());
+            } finally {
+                updateInProgress.set(false);
             }
         }, "lofa-apk-update").start();
     }

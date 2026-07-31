@@ -41,7 +41,7 @@ describe('toEpochMs 时间归一', () => {
 
 describe('tailCwd / termLabel / providerLabel', () => {
   it('cwd 尾段兼容正反斜杠与结尾分隔符', () => {
-    expect(tailCwd('E:/WindowsWorkspace/lofa')).toBe('lofa')
+    expect(tailCwd('/path/to/workspace/lofa')).toBe('lofa')
     expect(tailCwd('C:\\repo\\walker\\')).toBe('walker')
     expect(tailCwd('')).toBe('')
   })
@@ -100,7 +100,7 @@ describe('normalizeSessions — chat 四态归一', () => {
   })
   it('标题可读化:preview(首条用户输入)优先于 last_user,超长 clip 48', () => {
     const machine = 'Claude 编程 · omnicompany · 07月16日 10:52'
-    const long = '在 E:/WindowsWorkspace/omnicompany 下摸清以下事实并逐条汇报,读文件为准不要凭空猜测,先看依赖版本再看渲染配置最后给结论'
+    const long = '在 /path/to/workspace/omnicompany 下摸清以下事实并逐条汇报,读文件为准不要凭空猜测,先看依赖版本再看渲染配置最后给结论'
     const active = { items: [{ session_id: 'cs-p', status: 'done', mtime: 1800000000, preview: long, last_user: '别的输入' }] }
     const [r] = normalizeSessions([{ ...base, id: 'cp', name: machine, claude_session_id: 'cs-p', alive: true }], [], active)
     expect(r.title).toBe(long.slice(0, 48) + '…')
@@ -147,6 +147,47 @@ describe('normalizeSessions — chat 四态归一', () => {
 })
 
 describe('normalizeSessions — PTY 归一(含 recoverable)', () => {
+  it('uses the active digest matched by provider_session_id instead of the generic Codex CLI label', () => {
+    const pty = {
+      id: 'term-codex',
+      cmd: ['codex'],
+      provider: 'codex',
+      provider_session_id: 'codex-session-1',
+      cwd: '/w/b',
+      alive: true,
+    }
+    const active = {
+      items: [{
+        session_id: 'codex-session-1',
+        status: 'waiting',
+        digest: { title: '彻底修复 LOFA 会话标题' },
+        preview: '不要再显示通用标题',
+      }],
+    }
+    const [row] = normalizeSessions([], [pty], active)
+    expect(row.title).toBe('彻底修复 LOFA 会话标题')
+  })
+  it('uses provider_title when a PTY has no active digest', () => {
+    const [row] = normalizeSessions([], [{
+      id: 'term-provider-title',
+      cmd: ['codex'],
+      provider: 'codex',
+      provider_session_id: 'codex-session-2',
+      provider_title: '调查实体 LOFA 上始终显示通用标题的问题',
+      alive: true,
+    }], {})
+    expect(row.title).toBe('调查实体 LOFA 上始终显示通用标题的问题')
+  })
+  it('uses a unique provider session fallback instead of a shared Codex CLI title', () => {
+    const [row] = normalizeSessions([], [{
+      id: 'term-fallback',
+      cmd: ['codex'],
+      provider: 'codex',
+      provider_session_id: '019fabcd123456',
+      alive: true,
+    }], {})
+    expect(row.title).toBe('Codex 会话 · 123456')
+  })
   it('alive 但无 working 信号的 PTY → waiting,provider=term', () => {
     const [r] = normalizeSessions([], [{ id: 't1', cmd: ['powershell'], cwd: '/w/b', alive: true, last_output_at: 1700000000 }], {})
     expect(r).toMatchObject({ kind: 'term', status: 'waiting', provider: 'term', title: 'PowerShell', providerName: '终端' })

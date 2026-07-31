@@ -20,8 +20,8 @@ import {
 
 const LAST_NEW_KEY = 'lofa.lastNewSession'
 const POLL_MS = 8000
-// cwd 固定为 WindowsWorkspace(§7b 简化:新建 sheet 不再让用户选目录)。
-const FIXED_CWD = 'E:/WindowsWorkspace'
+// cwd 留空,由后端返回默认工作目录(§7b 简化:新建 sheet 不再让用户选目录)。
+const FIXED_CWD = ''
 
 // 新建类型清单:对话族 → POST /api/cc/chat/sessions;终端族 → POST /api/cc/sessions。
 const NEW_TYPES = [

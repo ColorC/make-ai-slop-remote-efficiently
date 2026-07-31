@@ -20,10 +20,10 @@ import { startRemote } from './remote.js'
 const TABS = { sessions: 'sessionsView', review: 'reviewView', projects: 'projectsView', me: 'meView' }
 
 // ── 连接成功:渲染我的、加载当前 tab、起 remote ─────────────────────────────
-function onConnected() {
+async function onConnected() {
+  await startRemote()
   settingsView.load()
   loadTab(router.current() === 'sessionsView' ? 'sessions' : null)
-  startRemote()
 }
 function connectInit() {
   const saved = getSaved()

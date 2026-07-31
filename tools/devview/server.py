@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import Body, FastAPI, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
-ADB = r"E:\WindowsWorkspace\lofa\tools\android-sdk\platform-tools\adb.exe"
+ADB = os.environ.get("ADB_PATH", os.path.join(os.path.dirname(__file__), "..", "android-sdk", "platform-tools", "adb.exe"))
 if not Path(ADB).exists():
     ADB = shutil.which("adb") or "adb"
 
@@ -185,7 +185,7 @@ def key(body: dict = Body(...)):
 @app.post("/dev/install")
 def install(body: dict = Body(...)):
     serial = body.get("serial", "emulator-5554")
-    apk = body.get("apk") or r"E:\WindowsWorkspace\lofa\app\android\app\build\outputs\apk\debug\app-debug.apk"
+    apk = body.get("apk") or os.path.join(os.path.dirname(__file__), "..", "..", "app", "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk")
     out = _adb(serial, "install", "-r", apk, timeout=120)
     return JSONResponse({"ok": "Success" in out, "out": out[-400:]})
 
@@ -222,4 +222,9 @@ def healthz():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("DEVVIEW_PORT", "8770")), log_level="warning")
+    uvicorn.run(
+        app,
+        host=os.environ.get("DEVVIEW_HOST", "127.0.0.1"),
+        port=int(os.environ.get("DEVVIEW_PORT", "8770")),
+        log_level="warning",
+    )

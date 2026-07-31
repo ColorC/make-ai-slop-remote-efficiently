@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Base64;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 
 final class DeviceBridgeConfig {
@@ -43,6 +45,22 @@ final class DeviceBridgeConfig {
         String token = Base64.encodeToString(bytes, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
         preferences.edit().putString(PREF_TOKEN, token).commit();
         return token;
+    }
+
+    static String webSessionCookieValue(Context context, String deviceId) {
+        return webSessionCookieValue(deviceId, deviceToken(context));
+    }
+
+    static String webSessionCookieValue(String deviceId, String token) {
+        try {
+            String encodedDevice = URLEncoder.encode(
+                    deviceId == null ? "" : deviceId.trim(),
+                    StandardCharsets.UTF_8.name()
+            ).replace("+", "%20");
+            return encodedDevice + "." + (token == null ? "" : token);
+        } catch (Exception impossible) {
+            throw new IllegalStateException("UTF-8 is unavailable", impossible);
+        }
     }
 
     private static SharedPreferences preferences(Context context) {

@@ -25,9 +25,22 @@
   background: var(--surface-input); overflow: hidden;
 }
 .term-screen { position: absolute; inset: 0; padding: 6px 8px 6px 10px; }
-.term-screen .xterm { height: 100%; }
+.term-screen .xterm { height: 100%; touch-action: none; }
 /* 终端输出滚动区(xterm-viewport 是真滚动容器):overscroll 锁链,滚到底不外泄给视图栈 */
 .term-screen .xterm-viewport { background: transparent !important; overscroll-behavior: contain; }
+
+/* 浏览历史时显式给出回到底部入口；默认隐藏，不遮挡终端输入。 */
+.term-latest {
+  position: absolute; right: 68px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 3;
+  min-height: 38px; padding: 0 13px; border-radius: 999px;
+  background: var(--glass-nav-fill); color: var(--fg);
+  -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
+  border: 1px solid var(--line); box-shadow: var(--shadow-sheet);
+  font-size: 13px; font-weight: 650;
+  display: none; align-items: center; justify-content: center;
+}
+.term-latest.show { display: inline-flex; }
+.term-latest:active { background: var(--surface-2); }
 
 /* 连接中 / 已退出 覆盖层 */
 .term-overlay {

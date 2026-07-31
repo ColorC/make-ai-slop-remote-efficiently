@@ -103,7 +103,10 @@ export function codeUrl() {
 
 // ── API fetch ─────────────────────────────────────────────────────────────────
 export async function api(path, opts) {
-  const r = await fetch(store.base + path, Object.assign({ cache: 'no-store' }, opts || {}))
+  const r = await fetch(store.base + path, Object.assign(
+    { cache: 'no-store', credentials: 'include' },
+    opts || {},
+  ))
   if (!r.ok) {
     let detail = ''
     try { const j = await r.json(); detail = j.detail || '' } catch (e) {}
@@ -117,11 +120,13 @@ export const apiJson = (path, method, body) =>
   api(path, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
 
 // WS URL(http→ws / https→wss)
+const PTY_CLIENT_PROTOCOL = 'focused-visible-v1'
 export function wsUrl(sid) {
   return store.base.replace(/^http/, 'ws') + '/api/cc/chat/sessions/' + encodeURIComponent(sid) + '/ws'
 }
 export function termWsUrl(sid) {
-  return store.base.replace(/^http/, 'ws') + '/api/cc/sessions/' + encodeURIComponent(sid) + '/ws'
+  return store.base.replace(/^http/, 'ws') + '/api/cc/sessions/' + encodeURIComponent(sid) +
+    '/ws?client_protocol=' + encodeURIComponent(PTY_CLIENT_PROTOCOL)
 }
 
 // ── 极简 markdown(无外网依赖) ───────────────────────────────────────────────
@@ -203,7 +208,12 @@ export const LOG = (function () {
   function flush() {
     if (!store.base || !buf.length) return
     const b = buf.splice(0, buf.length)
-    fetch(store.base + '/api/android/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entries: b }) }).catch(() => {})
+    fetch(store.base + '/api/android/log', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries: b }),
+    }).catch(() => {})
   }
   setInterval(flush, 4000)
   return { rec, flush }
@@ -276,10 +286,12 @@ export async function checkUpdate() {
     } else { store.update = null; _updateCb(null) }
   } catch (e) { LOG.rec('error', ['checkUpdate', e.message || e]) }
 }
+let _updatePromise = null
 export async function doUpdate() {
+  if (_updatePromise) { toast('更新正在下载，请稍候…'); return _updatePromise }
   const AI = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.ApkInstaller
   if (!AI) { toast('此环境不支持自安装'); return }
-  try {
+  _updatePromise = (async () => {
     const can = await AI.canInstall()
     if (!can || !can.granted) { toast('请先允许 LOFA「安装未知应用」，开启后再点更新'); await AI.openInstallPermission(); return }
     toast('下载中… 安装器稍后弹出'); LOG.rec('info', ['update.start', store.base])
@@ -288,7 +300,10 @@ export async function doUpdate() {
       sha256: String((store.update && store.update.manifest && store.update.manifest.sha256) || ''),
     })
     LOG.rec('info', ['update.installer-launched'])
-  } catch (e) { toast('更新失败: ' + (e.message || e)); LOG.rec('error', ['update.fail', e.message || e]) }
+  })()
+  try { return await _updatePromise }
+  catch (e) { toast('更新失败: ' + (e.message || e)); LOG.rec('error', ['update.fail', e.message || e]) }
+  finally { _updatePromise = null }
 }
 
 // Connection health check and foreground recovery.
@@ -296,7 +311,11 @@ async function healthCheck(base) {
   const ctrl = new AbortController()
   const to = setTimeout(() => ctrl.abort(), 6000)
   try {
-    const r = await fetch(base + '/api/healthz', { signal: ctrl.signal, cache: 'no-store' })
+    const r = await fetch(base + '/api/healthz', {
+      signal: ctrl.signal,
+      cache: 'no-store',
+      credentials: 'include',
+    })
     if (!r.ok) throw new Error('HTTP ' + r.status)
     const j = await r.json()
     if (!j.ok) throw new Error('healthz not ok')
@@ -329,10 +348,10 @@ export async function connect(base, onOk, onFail) {
   try {
     await healthCheck(base)
     store.base = base; connectionAlive(true)
-    LOG.rec('info', ['connect.ok', base]); LOG.flush()
-    fetch(base + '/api/android/register', { method: 'POST' }).catch(() => {})
+    LOG.rec('info', ['connect.ok', base])
+    if (onOk) await onOk()
+    LOG.flush()
     NOTIF.init(); startPolling(); checkUpdate()
-    if (onOk) onOk()
     fetchCodeConfig()
   } catch (e) {
     connectionLost()

@@ -30,6 +30,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(ApkInstaller.class);
         registerPlugin(DeviceAutomation.class);
+        registerPlugin(ExternalBrowser.class);
         super.onCreate(savedInstanceState);
         DeviceBridgeService.startIfConfigured(this);
         DevTunnelService.startIfConfigured(this);   // Reconnect the reverse debug tunnel when configured.
@@ -38,8 +39,9 @@ public class MainActivity extends BridgeActivity {
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         if (webView != null) {
-            // Remote pages run in cross-origin iframes. Keep auth cookies and route target=_blank/window.open
-            // through LofaWebChromeClient so the Dashboard creates an internal tab.
+            // Remote pages run in cross-origin iframes. Keep auth cookies and route
+            // target=_blank/window.open through LofaWebChromeClient; browserView then
+            // classifies internal URLs into Dashboard tabs and public URLs to Android's browser.
             cookieManager.setAcceptThirdPartyCookies(webView, true);
             WebSettings settings = webView.getSettings();
             settings.setSupportMultipleWindows(true);
@@ -113,7 +115,8 @@ public class MainActivity extends BridgeActivity {
 
     /**
      * Preserve all Capacitor WebChromeClient behavior and add only popup interception.
-     * The temporary WebView obtains the target URL but is never attached or handed to a system browser.
+     * The temporary WebView only obtains the target URL. browserView owns the
+     * internal-tab versus external-browser decision.
      */
     private final class LofaWebChromeClient extends BridgeWebChromeClient {
         LofaWebChromeClient(Bridge bridge) {

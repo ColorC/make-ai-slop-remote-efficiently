@@ -10,6 +10,7 @@ import { icons, openMenu, openSheet, banner } from './ui.js'
 import { openReconnectingWs } from './ws.js'
 import * as router from './router.js'
 import { KEY_ROWS, keySequence, createModifierState } from './termKeys.js'
+import { installTerminalTouchScroller, isTerminalViewportAtBottom } from './terminalTouchScroller.js'
 
 const FONT_KEY = 'lofa.termFontSize'
 const FONT_MIN = 9, FONT_MAX = 20, FONT_DEFAULT = 13
@@ -74,6 +75,8 @@ function teardown() {
   if (!cur) return
   const c = cur; cur = null
   try { if (c.ws) c.ws.leave() } catch (e) {}
+  try { if (c._disposeTouchScroll) c._disposeTouchScroll() } catch (e) {}
+  try { if (c._scrollSubscription) c._scrollSubscription.dispose() } catch (e) {}
   try { if (c._vvh) window.visualViewport && window.visualViewport.removeEventListener('resize', c._vvh) } catch (e) {}
   try { window.removeEventListener('resize', c._winResize) } catch (e) {}
   try { if (c.term) c.term.dispose() } catch (e) {}
@@ -106,6 +109,7 @@ export function open(meta) {
     '<div class="term-body">' +
     '<div class="term-screen" id="termScreen"></div>' +
     '<div class="term-overlay show" data-t="overlay"><div class="term-overlay-card"><div class="term-overlay-title" data-t="ovtitle">连接中…</div><div class="term-overlay-actions" data-t="ovactions"></div></div></div>' +
+    '<button class="term-latest" data-t="latest" aria-label="回到最新内容">↓ 最新</button>' +
     '<button class="term-kfab" data-t="kfab" aria-label="呼出键盘">' + icons.keyboard + '</button>' +
     '</div>' +
     buildKeysBar() +
@@ -117,11 +121,11 @@ export function open(meta) {
     wrap: view.querySelector('[data-t="wrap"]'), screen: view.querySelector('#termScreen'),
     overlay: view.querySelector('[data-t="overlay"]'), ovtitle: view.querySelector('[data-t="ovtitle"]'),
     ovactions: view.querySelector('[data-t="ovactions"]'), keys: view.querySelector('#termKeys'),
-    kfab: view.querySelector('[data-t="kfab"]'),
+    kfab: view.querySelector('[data-t="kfab"]'), latest: view.querySelector('[data-t="latest"]'),
   }
   view.querySelector('.lg-nav-back').addEventListener('click', () => router.pop())
 
-  const c = { meta, id, els, mods: createModifierState(), fontSize: getFontSize(), alive: true, term: null, fit: null, ws: null, kb: 0, pin: false }
+  const c = { meta, id, els, mods: createModifierState(), fontSize: getFontSize(), alive: true, term: null, fit: null, ws: null, kb: 0, pin: false, snapshot: null, snapshotEpoch: 0 }
   cur = c
   // 附加键条默认收起:软键盘弹起(kb>阈值)或键盘钮手动钉住才出现,不常驻占屏。
   if (els.kfab) els.kfab.addEventListener('click', () => { c.pin = true; syncKeys(c); if (c.term) { try { c.term.focus() } catch (e) {} } })
@@ -186,6 +190,18 @@ async function mountTerm(c) {
   } catch (e) { /* WebGL 不可用:留在 DOM 渲染器 */ }
   syncThemeBg(c, theme)
   c.term = term; c.fit = fit
+  c._disposeTouchScroll = installTerminalTouchScroller(c.els.screen, term)
+  const syncLatest = () => {
+    if (cur !== c || !c.els.latest) return
+    c.els.latest.classList.toggle('show', !isTerminalViewportAtBottom(term))
+  }
+  c._scrollSubscription = term.onScroll(syncLatest)
+  if (c.els.latest) {
+    c.els.latest.addEventListener('click', () => {
+      term.scrollToBottom()
+      syncLatest()
+    })
+  }
   try { window.__lofaTerm = term } catch (e) {}   // e2e/远程调试句柄(WebGL 渲染下 DOM 无文本,查屏走 buffer)
   raf(() => { try { fit.fit() } catch (e) {} })
 
@@ -205,26 +221,64 @@ function syncThemeBg(c, theme) {
 }
 
 // ── WS 接线(§2b) ────────────────────────────────────────────────────────────
+function renderSnapshot(c, chunks, meta) {
+  if (cur !== c || !c.term) return
+  c.snapshot = null
+  const epoch = ++c.snapshotEpoch
+  try { c.term.reset() } catch (e) {}
+  const parts = Array.isArray(chunks) ? chunks : []
+  parts.forEach((ch) => c.term.write(String(ch == null ? '' : ch)))
+  // xterm parses writes asynchronously. Queue final UI state and an optional
+  // SIGWINCH redraw behind every replay chunk so a truncated TUI snapshot gets
+  // a fresh self-contained repaint instead of keeping broken ANSI state.
+  c.term.write('', () => {
+    if (cur !== c || c.snapshotEpoch !== epoch) return
+    c.alive = true
+    hideOverlay(c)
+    setStatus(c, 'connected', '已连接')
+    doFit(c)
+    if (meta && meta.replay_truncated && c.ws) {
+      c.ws.send({ type: 'redraw', cols: c.term.cols, rows: c.term.rows })
+    }
+  })
+}
+
 function connectWs(c) {
   const url = termWsUrl(c.id)
   c.ws = openReconnectingWs(url, {
-    onOpen() { if (cur !== c) return; setStatus(c, 'connected', '已连接'); doFit(c) },
+    onOpen() { if (cur !== c) return; c.snapshot = null; c.snapshotEpoch++; setStatus(c, 'connected', '已连接'); doFit(c) },
     onFrame(f) {
       if (cur !== c || !f || !f.type) return
-      if (f.type === 'snapshot') {
-        try { c.term.reset() } catch (e) {}
-        ;(f.chunks || []).forEach((ch) => c.term.write(ch))
-        c.alive = true; hideOverlay(c); setStatus(c, 'connected', '已连接')
+      if (f.type === 'snapshot_begin') {
+        c.snapshotEpoch++
+        // Snapshot v2 is streamed in bounded frames. Do not reset xterm until
+        // the complete generation has arrived: a mid-stream disconnect must
+        // leave the previously visible screen intact rather than half blank.
+        c.snapshot = { chunks: [], meta: (f.meta && typeof f.meta === 'object') ? f.meta : {} }
+      } else if (f.type === 'snapshot_chunk') {
+        if (!c.snapshot) c.snapshot = { chunks: [], meta: {} }
+        ;(f.chunks || []).forEach((ch) => c.snapshot.chunks.push(ch))
+      } else if (f.type === 'snapshot_end') {
+        const snapshot = c.snapshot || { chunks: [], meta: {} }
+        renderSnapshot(c, snapshot.chunks, snapshot.meta)
+      } else if (f.type === 'snapshot') {
+        // v1 compatibility for older ccdaemon instances and offline fixtures.
+        renderSnapshot(c, f.chunks || [], f.meta || {})
       } else if (f.type === 'output') {
         c.term.write(f.data || ''); hideOverlay(c)
         if (c.status !== 'connected') setStatus(c, 'connected', '已连接')
       } else if (f.type === 'exit') {
+        c.snapshot = null
+        c.snapshotEpoch++
         c.alive = false; setStatus(c, 'ended', '已结束')
+        try { if (c.ws) c.ws.leave() } catch (e) {}
         showExit(c, f.reason)
       }
     },
     onReconnecting() {
       if (cur !== c) return
+      c.snapshot = null
+      c.snapshotEpoch++
       setStatus(c, 'disconnected', '重连中')
       banner('disconnected')
       if (c.alive) showOverlay(c, '连接中…', false)
@@ -233,7 +287,7 @@ function connectWs(c) {
   })
 }
 
-// ── 状态点 + 副行状态文字 ─────────────────────────────────────────────────────
+// ── 状态点 + 副行状态文字 ────────────────────
 // connecting=琥珀呼吸 / connected=绿 / disconnected=红 / ended=灰
 function setStatus(c, state, word) {
   c.status = state

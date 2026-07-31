@@ -101,6 +101,23 @@ export function historySessionTitle(payload) {
   return first ? clipSessionTitle(first.content || first.text, 48) : ''
 }
 
+function ptyIdentityTitle(m) {
+  const generic = termLabel(m && m.cmd)
+  if (!/^(Claude|Codex|Kimi|OpenCode) CLI$/.test(generic)) return generic
+  const provider = providerLabel(m && m.provider) || generic.replace(/ CLI$/, '')
+  const id = String((m && (m.provider_session_id || m.claude_session_id || m.id)) || '').trim()
+  return id ? provider + ' 会话 · ' + id.slice(-6) : provider + ' 会话'
+}
+
+function ptyTitle(m, hit) {
+  if (hit && hit.title) return clipSessionTitle(hit.title, 48)
+  const providerTitle = String((m && (m.name || m.provider_title || m.title)) || '').trim()
+  if (providerTitle && providerTitle !== termLabel(m && m.cmd)) return clipSessionTitle(providerTitle, 48)
+  if (hit && hit.preview) return clipSessionTitle(hit.preview, 48)
+  if (hit && hit.hint) return clipSessionTitle(hit.hint, 48)
+  return ptyIdentityTitle(m)
+}
+
 export function resolveChatHeaderTitle(m, firstUserText, titleHint) {
   const name = String((m && m.name) || '').trim()
   if (name && !isDefaultName(name)) return name
@@ -177,16 +194,21 @@ export function normalizeSessions(chatItems, ptyItems, activeMap) {
   })
   ;(ptyItems || []).forEach((m) => {
     if (!m || !m.id) return
+    const hit = activeHit(activeMap, [m.provider_session_id, m.claude_session_id, m.id])
+    const mtimeMs = hit && hit.mtime ? hit.mtime * 1000 : 0
     rows.push({
       id: m.id,
       kind: 'term',
-      title: termLabel(m.cmd),
+      title: ptyTitle(m, hit),
       provider: 'term',
       providerName: '终端',
       cwd: m.cwd || '',
       status: ptyStatus(m),
       // alive=last_output_at;recoverable 无 last_output_at,退 ended_at(被杀时刻)再退 started_at。
-      lastActive: toEpochMs(m.last_output_at || m.ended_at || m.started_at || m.created_at),
+      lastActive: Math.max(
+        mtimeMs,
+        toEpochMs(m.last_output_at || m.ended_at || m.started_at || m.created_at),
+      ),
       meta: m,
     })
   })

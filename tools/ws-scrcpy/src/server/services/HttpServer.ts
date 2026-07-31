@@ -127,7 +127,8 @@ export class HttpServer extends TypedEmitter<HttpServerEvents> implements Servic
                 server = http.createServer(options, currentApp);
             }
             this.servers.push({ server, port });
-            server.listen(port, () => {
+            const listenHost = process.env.WS_SCRCPY_HOST || '127.0.0.1';
+            server.listen(port, listenHost, () => {
                 Utils.printListeningMsg(proto, port, PATHNAME);
             });
         });

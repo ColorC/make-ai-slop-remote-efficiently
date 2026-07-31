@@ -72,7 +72,7 @@ test.describe('会话空间', () => {
     await page.locator('#newSheet #newCreate').click()
 
     await until(() => ctx.chatCreates.length)
-    expect(ctx.chatCreates[0]).toEqual({ provider: 'codex', cwd: 'E:/WindowsWorkspace' })
+    expect(ctx.chatCreates[0]).toEqual({ provider: 'codex', cwd: '/path/to/workspace' })
     await expect(page.locator('#chatView')).toHaveClass(/show/)
     await until(() => chatWs.ws)
   })
@@ -87,7 +87,7 @@ test.describe('会话空间', () => {
     await page.locator('#newSheet #newCreate').click()
 
     await until(() => ctx.ptyCreates.length)
-    expect(ctx.ptyCreates[0]).toEqual({ cmd: ['powershell'], cwd: 'E:/WindowsWorkspace', cols: 80, rows: 24, safe_mode: false })
+    expect(ctx.ptyCreates[0]).toEqual({ cmd: ['powershell'], cwd: '/path/to/workspace', cols: 80, rows: 24, safe_mode: false })
     await expect(page.locator('#termView')).toHaveClass(/show/)
     await until(() => ptyWs.ws)
   })

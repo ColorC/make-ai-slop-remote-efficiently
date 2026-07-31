@@ -14,6 +14,25 @@ const S = {
 }
 const openers = {}
 const changeCbs = []
+// A view can be reopened before its previous push/pop animation finishes.
+// Generation guards prevent a stale animationend callback from hiding the
+// newly reopened view (the terminal is especially easy to hit after resize).
+const transitionGeneration = new WeakMap()
+function cancelViewTransition(view) {
+  if (!view) return
+  transitionGeneration.set(view, (transitionGeneration.get(view) || 0) + 1)
+  view.classList.remove('anim-in', 'anim-out')
+}
+function runViewTransition(view, className, complete) {
+  cancelViewTransition(view)
+  const generation = transitionGeneration.get(view)
+  view.classList.add(className)
+  view.addEventListener('animationend', function onAnimationEnd() {
+    if (transitionGeneration.get(view) !== generation) return
+    view.classList.remove(className)
+    complete()
+  }, { once: true })
+}
 // 主从分栏:detail viewId → master viewId(≥600 时同屏,不推入)
 const SPLIT_PAIRS = { reviewDetailView: 'reviewView', projectDetailView: 'projectsView' }
 
@@ -56,7 +75,7 @@ export function tab(name) {
   const root = S.tabs[name]
   // 收起分栏与所有推入/显示态,只显根
   S.split = null; document.body.classList.remove('split-active')
-  allViews().forEach((v) => v.classList.remove('show', 'anim-in', 'anim-out'))
+  allViews().forEach((v) => { cancelViewTransition(v); v.classList.remove('show') })
   S.tab = name; S.stack = [root]
   const r = el(root); if (r) r.classList.add('show')
   updateNav(); notify()
@@ -77,14 +96,8 @@ export function push(viewId) {
   e.classList.add('show')
   // 推入完成(或瞬切)后隐藏前一页;若动画中途旋入 split 且前一页正是分栏 master,保留同屏
   const hideCur = () => { if (cur && !(S.split && SPLIT_PAIRS[S.split] === cur)) el(cur).classList.remove('show') }
-  if (reducedMotion()) hideCur()
-  else {
-    e.classList.add('anim-in')
-    e.addEventListener('animationend', function h() {
-      e.classList.remove('anim-in'); e.removeEventListener('animationend', h)
-      hideCur()
-    }, { once: true })
-  }
+  if (reducedMotion()) { cancelViewTransition(e); hideCur() }
+  else runViewTransition(e, 'anim-in', hideCur)
   updateNav(); notify()
 }
 
@@ -100,11 +113,8 @@ export function pop() {
   const u = el(under); if (u) u.classList.add('show')
   const e = el(top)
   if (!e) { updateNav(); notify(); return true }
-  if (reducedMotion()) { e.classList.remove('show') }
-  else {
-    e.classList.add('anim-out')
-    e.addEventListener('animationend', function h() { e.classList.remove('anim-out', 'show'); e.removeEventListener('animationend', h) }, { once: true })
-  }
+  if (reducedMotion()) { cancelViewTransition(e); e.classList.remove('show') }
+  else runViewTransition(e, 'anim-out', () => e.classList.remove('show'))
   updateNav(); notify(); return true
 }
 
@@ -128,7 +138,7 @@ function onSplitMqChange() {
       S.split = top
       document.body.classList.add('split-active')
       const m = el(SPLIT_PAIRS[top]); if (m) m.classList.add('show')
-      const d = el(top); if (d) { d.classList.add('show'); d.classList.remove('anim-in', 'anim-out') }
+      const d = el(top); if (d) { cancelViewTransition(d); d.classList.add('show') }
       updateNav()
     }
   } else if (S.split) {

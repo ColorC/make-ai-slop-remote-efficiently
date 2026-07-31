@@ -4,7 +4,7 @@
 # 用法: bash push-update.sh [ip:port]    不传则自动找设备(后端记的手机IP / 上次成功)
 # 前提: 手机在与 PC 互通的扁平网(飞连/ZTNA 单向连不上); 已 adb tcpip 5555。
 set -uo pipefail
-ROOT="/e/WindowsWorkspace/lofa"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ADB="$ROOT/tools/device/platform-tools/adb.exe"
 APP="$ROOT/app"
 GRADLE="$APP/android/app/build.gradle"

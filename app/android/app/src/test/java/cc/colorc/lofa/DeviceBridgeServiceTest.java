@@ -4,10 +4,19 @@ import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class DeviceBridgeServiceTest {
+    @Test
+    public void webSessionCookieKeepsDeviceTokenOutOfJavascriptAndEncodesDeviceId() {
+        assertEquals(
+                "phone%20with%20space.native-token",
+                DeviceBridgeConfig.webSessionCookieValue("phone with space", "native-token")
+        );
+    }
+
     @Test
     public void cleanupDebugMediaOnlyAcceptsKnownDebugNames() {
         assertTrue(DeviceBridgeService.isSafeDebugMediaName("lofa-xhs-gallery.png"));

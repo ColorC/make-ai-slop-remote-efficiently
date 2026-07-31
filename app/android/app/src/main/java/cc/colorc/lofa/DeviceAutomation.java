@@ -2,6 +2,7 @@ package cc.colorc.lofa;
 
 import android.content.Intent;
 import android.provider.Settings;
+import android.webkit.CookieManager;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -11,20 +12,45 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "DeviceAutomation")
 public final class DeviceAutomation extends Plugin {
+    private static final String WEB_SESSION_COOKIE = "omni_lofa_session";
+    private static final int WEB_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+
     @PluginMethod
     public void configure(PluginCall call) {
-        String baseUrl = call.getString("baseUrl", "");
+        String baseUrl = call.getString("baseUrl", "").trim().replaceAll("/+$", "");
         String deviceId = call.getString("deviceId", "");
         if (baseUrl.trim().isEmpty() || deviceId.trim().isEmpty()) {
             call.reject("baseUrl and deviceId are required");
             return;
         }
+        if (!baseUrl.startsWith("https://")) {
+            call.reject("LOFA device sessions require HTTPS");
+            return;
+        }
         LofaAccessibilityService.configure(getContext(), baseUrl, deviceId);
-        JSObject result = new JSObject();
-        result.put("configured", true);
-        result.put("accessibility_enabled", LofaAccessibilityService.isRunning());
-        result.put("device_id", deviceId);
-        call.resolve(result);
+        String cookie = WEB_SESSION_COOKIE + "="
+                + DeviceBridgeConfig.webSessionCookieValue(getContext(), deviceId)
+                + "; Path=/; Max-Age=" + WEB_SESSION_MAX_AGE_SECONDS
+                // The packaged Capacitor UI runs at https://localhost and calls the
+                // Dashboard origin cross-site. Android WebView therefore requires
+                // SameSite=None for the HttpOnly device cookie to accompany API/WS
+                // requests; CORS remains restricted to the packaged-app origins.
+                + "; Secure; HttpOnly; SameSite=None";
+        CookieManager manager = CookieManager.getInstance();
+        manager.setAcceptCookie(true);
+        manager.setCookie(baseUrl, cookie, accepted -> {
+            if (!Boolean.TRUE.equals(accepted)) {
+                call.reject("failed to establish LOFA device session");
+                return;
+            }
+            manager.flush();
+            JSObject result = new JSObject();
+            result.put("configured", true);
+            result.put("web_session", true);
+            result.put("accessibility_enabled", LofaAccessibilityService.isRunning());
+            result.put("device_id", deviceId);
+            call.resolve(result);
+        });
     }
 
     @PluginMethod
