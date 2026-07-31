@@ -21,11 +21,17 @@ const DOM = `
   </div>
 `
 
-const NOW = Date.now()
-const isoAgo = (ms) => new Date(NOW - ms).toISOString()
-const T_TODAY = isoAgo(2 * 3600 * 1000)
-const T_YESTERDAY = isoAgo(26 * 3600 * 1000)
-const T_OLDER = isoAgo(10 * 24 * 3600 * 1000)
+// Anchor fixtures to local calendar days so this suite is stable around midnight.
+const TODAY_NOON = new Date()
+TODAY_NOON.setHours(12, 0, 0, 0)
+const isoDayOffset = (days) => {
+  const value = new Date(TODAY_NOON)
+  value.setDate(value.getDate() - days)
+  return value.toISOString()
+}
+const T_TODAY = isoDayOffset(0)
+const T_YESTERDAY = isoDayOffset(1)
+const T_OLDER = isoDayOffset(10)
 
 // mock 样本对齐真后端: 评论/批注用 content+author+target(无 text/by/anchor);
 // 推送态用 pushed_to_user;key_question 的 inline_content 是 JSON 字符串。
