@@ -11,6 +11,7 @@ import { openReconnectingWs } from './ws.js'
 import * as router from './router.js'
 import { KEY_ROWS, keySequence, createModifierState } from './termKeys.js'
 import { installTerminalTouchScroller, isTerminalViewportAtBottom } from './terminalTouchScroller.js'
+import { terminalRendererForWindow } from './terminalRendererPolicy.js'
 
 const FONT_KEY = 'lofa.termFontSize'
 const FONT_MIN = 9, FONT_MAX = 20, FONT_DEFAULT = 13
@@ -184,10 +185,25 @@ async function mountTerm(c) {
     } catch (e2) {}
   }
   term.open(c.els.screen)
-  try {
-    const W = window.WebglAddon && (window.WebglAddon.WebglAddon || window.WebglAddon)
-    if (W) { const wa = new W(); wa.onContextLoss(() => { try { wa.dispose() } catch (e) {} }); term.loadAddon(wa) }
-  } catch (e) { /* WebGL 不可用:留在 DOM 渲染器 */ }
+  const renderer = terminalRendererForWindow(window)
+  if (renderer === 'webgl') {
+    try {
+      const W = window.WebglAddon && (window.WebglAddon.WebglAddon || window.WebglAddon)
+      if (W) {
+        const wa = new W()
+        wa.onContextLoss(() => {
+          try { wa.dispose() } catch (e) {}
+          try { term.refresh(0, Math.max(0, term.rows - 1)) } catch (e) {}
+          LOG.rec('warn', ['terminal.renderer.fallback', 'webgl-context-loss'])
+        })
+        term.loadAddon(wa)
+      }
+    } catch (e) {
+      LOG.rec('warn', ['terminal.renderer.fallback', e.message || 'webgl-unavailable'])
+    }
+  } else {
+    LOG.rec('info', ['terminal.renderer', 'dom', 'touch-device-safety'])
+  }
   syncThemeBg(c, theme)
   c.term = term; c.fit = fit
   c._disposeTouchScroll = installTerminalTouchScroller(c.els.screen, term)
