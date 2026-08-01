@@ -117,6 +117,25 @@ export function load() {
   startPoll()
 }
 
+// Deep-link / remote.navigate entry point. Refresh first so a notification can
+// open a session created after the list was last rendered. Accept both the row
+// id and provider ids persisted by native notifications or companion surfaces.
+export async function openSession(id) {
+  const target = String(id || '').trim()
+  if (!target || !store.base) return false
+  await refresh()
+  const row = _rows.find((r) => {
+    const m = r.meta || {}
+    return [r.id, m.id, m.provider_session_id, m.claude_session_id, m.session_id]
+      .some((v) => v != null && String(v) === target)
+  })
+  if (!row) {
+    toast('未找到会话:' + target, { type: 'err' })
+    return false
+  }
+  return (await openRow(row)) !== false
+}
+
 function bindVisibility() {
   if (_visBound || typeof document === 'undefined') return
   _visBound = true
@@ -383,6 +402,7 @@ function openRow(r) {
   } else {
     router.open('term', r.meta)
   }
+  return true
 }
 
 // recoverable 行点击即自动续接(§11a 末条):直接 POST /resume → 进终端,无确认弹窗;失败 toast。
@@ -391,7 +411,11 @@ async function resumeRow(r) {
     const meta = await apiJson('/api/cc/sessions/' + encodeURIComponent(r.id) + '/resume', 'POST', {})
     router.open('term', meta)
     refresh()
-  } catch (e) { toast('续接失败:' + (e.message || e), { type: 'err' }) }
+    return true
+  } catch (e) {
+    toast('续接失败:' + (e.message || e), { type: 'err' })
+    return false
+  }
 }
 
 // ── 长按 / 行尾菜单:改名·绑定计划·压缩(chat)·归档/杀死·删除 ──────────────────

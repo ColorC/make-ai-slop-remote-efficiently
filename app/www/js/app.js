@@ -86,7 +86,10 @@ function boot() {
   router.registerOpener('browser', () => browserView.openHome())
   router.registerOpener('web', (p) => browserView.openWeb((p && p.url) || '', (p && p.title) || ''))
   router.registerOpener('connect', () => settingsView.openConnect())
-  router.registerOpener('session', (id) => { router.tab('sessions'); void id })
+  router.registerOpener('session', async (id) => {
+    router.tab('sessions')
+    return sessionsView.openSession(id)
+  })
   router.registerOpener('review', (id) => { router.tab('review'); if (id) reviewView.openDetail(id) })
 
   // 只在停在 tab 根页时加载列表:push 详情/对话/终端(view≠根)不触发重复拉取,pop 回根页再刷。

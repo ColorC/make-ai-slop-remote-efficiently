@@ -133,4 +133,23 @@ test.describe('会话空间', () => {
     await until(() => ptyWs.ws)
     void ctx
   })
+
+  test('session deep link accepts provider id and resumes a recoverable PTY', async ({ page }) => {
+    const data = mixed()
+    data.ptySessions.recoverable[0].provider_session_id = 'provider-r1'
+    await baseRoutes(page, data)
+    const ptyWs = await installPtyWs(page)
+    let resumed = false
+    await page.route(/\/api\/cc\/sessions\/r1\/resume/, (r) => {
+      resumed = true
+      return json(r, { id: 'r1-resumed', cmd: null, cwd: 'E:/proj/gamma', alive: true, resumed_from: 'r1' })
+    })
+    await landSessions(page)
+
+    const opened = await page.evaluate(() => window.LOFA.router.open('session:provider-r1'))
+    expect(opened).toBe(true)
+    await until(() => resumed)
+    await expect(page.locator('#termView')).toHaveClass(/show/)
+    await until(() => ptyWs.ws)
+  })
 })

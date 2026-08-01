@@ -208,6 +208,38 @@ test.describe('终端屏', () => {
     await until(() => ws.sent.find((m) => m.type === 'input' && m.data === '\x03'))
   })
 
+  test('移动输入法智能引号只发送差量，不重复此前文字', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, 'maxTouchPoints', { configurable: true, get: () => 5 })
+    })
+    const { ws } = await openTerm(page)
+    await push(ws, { type: 'snapshot', chunks: [''] })
+
+    await page.locator('#termScreen .xterm-helper-textarea').evaluate((textarea) => {
+      const fire = (data) => textarea.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        data,
+        inputType: 'insertText',
+      }))
+      textarea.value = 'abc"'
+      fire('abc"')
+    })
+    await until(() => ws.sent.find((m) => m.type === 'input' && m.data === 'abc"'))
+
+    await page.locator('#termScreen .xterm-helper-textarea').evaluate((textarea) => {
+      textarea.value = '“abc”'
+      textarea.dispatchEvent(new InputEvent('input', {
+        bubbles: true,
+        cancelable: true,
+        data: '“abc”',
+        inputType: 'insertText',
+      }))
+    })
+    await until(() => ws.sent.find((m) => m.type === 'input' && m.data === '\x7f\x7f\x7f\x7f“abc”'))
+    expect(ws.sent.filter((m) => m.type === 'input' && m.data === '“abc”')).toHaveLength(0)
+  })
+
   test('exit → 覆盖层出现并可回列表', async ({ page }) => {
     const { ws } = await openTerm(page)
     await push(ws, { type: 'snapshot', chunks: [''] })

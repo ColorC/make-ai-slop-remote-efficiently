@@ -74,14 +74,17 @@ test.describe('导航栈', () => {
 
   test('深链:open(tab) / open(session:id) / open(review:id)', async ({ page }) => {
     const ctx = await baseRoutes(page)
+    await installChatWs(page)
+    ctx.chatSessions = { items: [{ id: 'c1', kind: 'chat', name: 'Deep link session', provider: 'claude_code', cwd: 'E:/p', alive: true, started_at: Date.now() / 1000 }] }
     await setupReview(page, ctx)
     await landSessions(page)
 
     await page.evaluate(() => window.LOFA.router.open('projects'))
     await expect(page.locator('#projectsView')).toHaveClass(/show/)
 
-    await page.evaluate(() => window.LOFA.router.open('session:c1'))
-    await expect(page.locator('#sessionsView')).toHaveClass(/show/)
+    const opened = await page.evaluate(() => window.LOFA.router.open('session:c1'))
+    expect(opened).toBe(true)
+    await expect(page.locator('#chatView')).toHaveClass(/show/)
 
     await page.evaluate(() => window.LOFA.router.open('review:m1'))
     await expect(page.locator('#reviewView')).toHaveClass(/show/)

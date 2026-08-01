@@ -35,8 +35,12 @@ async function execCommand(cmd) {
       return { shown: true, msg: args.msg }
     case 'navigate': {
       // 走新导航 API:args.tab=tab 名(sessions/review/projects/me),或 args.session/args.review 深链。
-      if (args.session) { router.open('session', String(args.session)); return { navigated: 'session:' + args.session, view: router.current() } }
-      if (args.review) { router.open('review', String(args.review)); return { navigated: 'review:' + args.review, view: router.current() } }
+      if (args.session) {
+        const ok = await router.open('session', String(args.session))
+        if (ok === false) return { error: 'no_session:' + args.session }
+        return { navigated: 'session:' + args.session, view: router.current() }
+      }
+      if (args.review) { await router.open('review', String(args.review)); return { navigated: 'review:' + args.review, view: router.current() } }
       const tab = String(args.tab || 'sessions')
       const ok = router.open(tab)
       if (ok === false) return { error: 'no_tab:' + tab }

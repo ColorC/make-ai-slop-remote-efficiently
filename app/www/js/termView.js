@@ -12,6 +12,7 @@ import * as router from './router.js'
 import { KEY_ROWS, keySequence, createModifierState } from './termKeys.js'
 import { installTerminalTouchScroller, isTerminalViewportAtBottom } from './terminalTouchScroller.js'
 import { terminalRendererForWindow } from './terminalRendererPolicy.js'
+import { installMobileTerminalInputGuard } from './mobileTerminalInput.js'
 
 const FONT_KEY = 'lofa.termFontSize'
 const FONT_MIN = 9, FONT_MAX = 20, FONT_DEFAULT = 13
@@ -77,6 +78,7 @@ function teardown() {
   const c = cur; cur = null
   try { if (c.ws) c.ws.leave() } catch (e) {}
   try { if (c._disposeTouchScroll) c._disposeTouchScroll() } catch (e) {}
+  try { if (c._disposeMobileInput) c._disposeMobileInput() } catch (e) {}
   try { if (c._scrollSubscription) c._scrollSubscription.dispose() } catch (e) {}
   try { if (c._vvh) window.visualViewport && window.visualViewport.removeEventListener('resize', c._vvh) } catch (e) {}
   try { window.removeEventListener('resize', c._winResize) } catch (e) {}
@@ -207,6 +209,9 @@ async function mountTerm(c) {
   syncThemeBg(c, theme)
   c.term = term; c.fit = fit
   c._disposeTouchScroll = installTerminalTouchScroller(c.els.screen, term)
+  c._disposeMobileInput = term.textarea
+    ? installMobileTerminalInputGuard(term.textarea, term, { eventRoot: c.els.screen })
+    : null
   const syncLatest = () => {
     if (cur !== c || !c.els.latest) return
     c.els.latest.classList.toggle('show', !isTerminalViewportAtBottom(term))
