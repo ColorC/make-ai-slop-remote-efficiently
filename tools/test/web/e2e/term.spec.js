@@ -16,6 +16,29 @@ async function openTerm(page) {
 }
 
 test.describe('终端屏', () => {
+  test('touch-device DOM renderer opens without a runtime error and connects PTY', async ({ page }) => {
+    const pageErrors = []
+    page.on('pageerror', (error) => pageErrors.push(error.message))
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, 'maxTouchPoints', { configurable: true, get: () => 5 })
+    })
+
+    const { ws } = await openTerm(page)
+    await push(ws, { type: 'snapshot', chunks: ['mobile-terminal-ready\r\n'] })
+    await until(() => page.evaluate(() => {
+      const terminal = window.__lofaTerm
+      if (!terminal) return false
+      const buffer = terminal.buffer.active
+      for (let row = 0; row < buffer.length; row++) {
+        const line = buffer.getLine(row)
+        if (line && line.translateToString().includes('mobile-terminal-ready')) return true
+      }
+      return false
+    }))
+
+    expect(pageErrors).toEqual([])
+  })
+
   test('snapshot 重画出现文本', async ({ page }) => {
     const { ws } = await openTerm(page)
     await push(ws, { type: 'snapshot', chunks: ['snapshot-marker-42\r\n'] })

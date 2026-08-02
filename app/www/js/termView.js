@@ -5,7 +5,7 @@
 //     服→客 snapshot(重画)/output/exit;客→服 input/resize。
 //   附加键条纯逻辑在 termKeys.js;终端是内容层,容器实底无玻璃。
 
-import { esc, termWsUrl, store, apiJson, api, toast, promptModal, confirmModal } from './core.js'
+import { esc, termWsUrl, store, apiJson, api, toast, promptModal, confirmModal, LOG } from './core.js'
 import { icons, openMenu, openSheet, banner } from './ui.js'
 import { openReconnectingWs } from './ws.js'
 import * as router from './router.js'
