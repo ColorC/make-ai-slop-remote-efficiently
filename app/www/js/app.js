@@ -22,6 +22,10 @@ const TABS = { sessions: 'sessionsView', review: 'reviewView', projects: 'projec
 // ── 连接成功:渲染我的、加载当前 tab、起 remote ─────────────────────────────
 async function onConnected() {
   await startRemote()
+  // startRemote 铸造/续期本机设备会话;在它之前加载的远端页面可能停在网关 401 登录页
+  // (跨源 iframe 读不到内容,只能重取)。放在这里 = 每次连上都让远端面重新过一次鉴权。
+  notes.reloadAfterConnect()
+  browserView.reloadAfterConnect()
   settingsView.load()
   loadTab(router.current() === 'sessionsView' ? 'sessions' : null)
 }

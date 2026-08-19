@@ -212,6 +212,17 @@ export function openWeb(value, title) {
   return 'home'
 }
 
+// See notesView.reloadAfterConnect: the Dashboard frame can be holding the gateway's
+// 401 login page from before this device's session was minted, and a cross-origin frame
+// never tells us so. Only refetch a frame that already loaded something — an untouched
+// surface is left for its first open to fill.
+export function reloadAfterConnect() {
+  if (!dashboardFrame || !dashboardUrl) return
+  dashboardLoaded = false
+  dashboardUrl = connectedDashboardUrl()
+  dashboardFrame.src = dashboardUrl
+}
+
 export async function openHome() {
   if (!store.base) { toast('\u672a\u8fde\u63a5'); return }
   ensureDashboardFrame()
