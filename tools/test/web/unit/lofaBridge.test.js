@@ -13,6 +13,40 @@ describe('LOFA shell native bridge', () => {
     bridge = await import('../../../../app/www/js/browserView.js')
   })
 
+  it('retires the floating shell tools once Dashboard declares it hosts them', async () => {
+    bridge.init()
+    await bridge.openHome()
+    const frame = document.querySelector('#browserView iframe')
+    frame.dispatchEvent(new Event('load'))
+    const tools = document.querySelector('.browser-local-tools')
+    // 未握手(未连接 / 旧版驾驶舱 / 401 登录页): 浮标必须在, 那是唯一自救入口。
+    expect(tools.hidden).toBe(false)
+
+    const bootstrap = (features) => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://10.3.43.246:12443',
+      data: {
+        type: bridge.LOFA_BOOTSTRAP_REQUEST,
+        protocol: bridge.LOFA_BRIDGE_PROTOCOL,
+        request_id: 'bootstrap-tools',
+        bootstrap: {
+          frontend_build: 'ui-cl-1400000',
+          api_schema_version: 1,
+          min_native_bridge_version: 1,
+          features,
+        },
+      },
+    }))
+
+    bootstrap(['dashboard.entities'])
+    await Promise.resolve()
+    expect(tools.hidden).toBe(false)
+
+    bootstrap(['dashboard.entities', 'shell.hosts-lofa-controls'])
+    await Promise.resolve()
+    expect(tools.hidden).toBe(true)
+  })
+
   it('answers a trusted bootstrap with version and declared capabilities', async () => {
     bridge.init()
     await bridge.openHome()

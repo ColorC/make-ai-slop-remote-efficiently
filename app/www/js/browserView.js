@@ -17,6 +17,7 @@ let dashboardFrame = null
 let dashboardLoaded = false
 let initialized = false
 let dashboardUrl = ''
+let localTools = null
 const pendingTabs = []
 const pendingNativeTabs = []
 let lastDashboardBootstrap = null
@@ -258,6 +259,7 @@ async function onDashboardBridgeMessage(event) {
       features: Array.isArray(bootstrap.features) ? bootstrap.features.filter((item) => typeof item === 'string') : [],
     }
     document.documentElement.dataset.lofaFrontendBuild = lastDashboardBootstrap.frontend_build
+    syncLocalTools()
     postBridgeMessage(event.source, {
       type: LOFA_BOOTSTRAP_RESPONSE,
       protocol: LOFA_BRIDGE_PROTOCOL,
@@ -276,6 +278,21 @@ async function onDashboardBridgeMessage(event) {
   } catch (error) {
     bridgeResult(event, data.request_id, false, null, error && error.message ? error.message : error)
   }
+}
+
+/**
+ * Dashboard 自带「重载 / LOFA 设置」两项时, 壳撤掉右上角那层浮标。
+ * 它是绝对定位盖在 Dashboard 之上的, 手机上正好压住页签条与工具行。
+ * 没握上手(未连接 / 旧版驾驶舱 / 401 登录页)时它必须留着 —— 那是唯一的自救入口。
+ */
+function dashboardHostsShellControls() {
+  return Boolean(lastDashboardBootstrap &&
+    lastDashboardBootstrap.features.indexOf('shell.hosts-lofa-controls') >= 0)
+}
+
+export function syncLocalTools() {
+  if (!localTools) return
+  localTools.hidden = dashboardHostsShellControls()
 }
 
 export function getDashboardBootstrap() {
@@ -334,6 +351,8 @@ function ensureDashboardFrame() {
   if (dashboardUrl !== nextUrl) {
     dashboardUrl = nextUrl
     dashboardLoaded = false
+    lastDashboardBootstrap = null
+    syncLocalTools()
     dashboardFrame.src = dashboardUrl
   }
   return dashboardFrame
@@ -344,6 +363,7 @@ function reloadDashboard() {
   const externalWebview = plugins().ExternalWebview
   if (externalWebview && typeof externalWebview.closeAll === 'function') void externalWebview.closeAll()
   lastDashboardBootstrap = null
+  syncLocalTools()
   dashboardUrl = connectedDashboardUrl()
   dashboardLoaded = false
   dashboardFrame.src = dashboardUrl
@@ -364,6 +384,7 @@ export function init() {
       '</div>' +
     '</div>'
   dashboardFrame = view.querySelector('.browser-frame')
+  localTools = view.querySelector('.browser-local-tools')
   dashboardFrame.addEventListener('load', () => {
     // A Dashboard hot reload cannot reliably post unmount cleanup while its
     // document is being replaced. Remove old native layers before the new
@@ -450,6 +471,8 @@ export function openEntity(type, id, title) {
 export function reloadAfterConnect() {
   if (!dashboardFrame || !dashboardUrl) return
   dashboardLoaded = false
+  lastDashboardBootstrap = null
+  syncLocalTools()
   dashboardUrl = connectedDashboardUrl()
   dashboardFrame.src = dashboardUrl
 }

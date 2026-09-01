@@ -7,12 +7,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Message;
 import android.view.View;
+import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -51,6 +54,12 @@ public class MainActivity extends BridgeActivity {
         }
 
         applyImmersiveMode();
+        observeSafeAreaInsets();
+        // The shell document loads after onCreate; the first inset dispatch can land on
+        // about:blank. Re-dispatch twice so the CSS variables reach the real document.
+        View decor = getWindow().getDecorView();
+        decor.postDelayed(() -> ViewCompat.requestApplyInsets(decor), 600);
+        decor.postDelayed(() -> ViewCompat.requestApplyInsets(decor), 2500);
         handleDevTunnelIntent(getIntent());
         handleFileShareIntent(getIntent());
     }
@@ -67,17 +76,30 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         applyImmersiveMode();
+        ViewCompat.requestApplyInsets(getWindow().getDecorView());
     }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) applyImmersiveMode();
+        if (hasFocus) {
+            applyImmersiveMode();
+            ViewCompat.requestApplyInsets(getWindow().getDecorView());
+        }
     }
 
     /** Edge-to-edge immersive sticky mode; system bars no longer reserve WebView layout space. */
     private void applyImmersiveMode() {
         WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // Draw into the cutout on purpose: the shell wants the whole panel, and it
+            // measures the obstruction itself (observeSafeAreaInsets) instead of letting
+            // the system letterbox the window away from it.
+            WindowManager.LayoutParams attributes = getWindow().getAttributes();
+            attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(attributes);
+        }
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         getWindow().setNavigationBarColor(Color.TRANSPARENT);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -102,6 +124,58 @@ public class MainActivity extends BridgeActivity {
                 | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         );
+    }
+
+    /**
+     * Publish the real obstructed strip to the web layer as CSS variables.
+     *
+     * The shell runs immersive, so the system bars claim no layout space and
+     * `env(safe-area-inset-*)` inside the Dashboard iframe is always zero — a nested
+     * document cannot see the device at all. The package can: it reads the display
+     * cutout (camera island) directly, floors it with the platform status-bar height
+     * so devices without a cutout still clear the clock strip, and hands the result
+     * down. Web side only consumes `--lofa-safe-*`; it never guesses.
+     */
+    private void observeSafeAreaInsets() {
+        View decor = getWindow().getDecorView();
+        ViewCompat.setOnApplyWindowInsetsListener(decor, (view, insets) -> {
+            float density = getResources().getDisplayMetrics().density;
+            if (density <= 0) density = 1f;
+            Insets cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout());
+            int top = Math.max(cutout.top, statusBarHeightPx());
+            // 80dp is a sanity ceiling: no phone reserves more, and a bad inset must not
+            // eat the panel. Bottom follows the cutout only — the gesture bar is hidden.
+            publishSafeArea(
+                clampDp(top / density),
+                clampDp(cutout.right / density),
+                clampDp(cutout.bottom / density),
+                clampDp(cutout.left / density)
+            );
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(decor);
+    }
+
+    private int statusBarHeightPx() {
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return id > 0 ? getResources().getDimensionPixelSize(id) : 0;
+    }
+
+    private static int clampDp(float value) {
+        if (!(value > 0)) return 0;
+        return (int) Math.min(80, Math.round(value));
+    }
+
+    private void publishSafeArea(int top, int right, int bottom, int left) {
+        WebView webView = getBridge() == null ? null : getBridge().getWebView();
+        if (webView == null) return;
+        String script = "(function(s){"
+            + "s.setProperty('--lofa-safe-top'," + JSONObject.quote(top + "px") + ");"
+            + "s.setProperty('--lofa-safe-right'," + JSONObject.quote(right + "px") + ");"
+            + "s.setProperty('--lofa-safe-bottom'," + JSONObject.quote(bottom + "px") + ");"
+            + "s.setProperty('--lofa-safe-left'," + JSONObject.quote(left + "px") + ");"
+            + "})(document.documentElement.style);";
+        webView.post(() -> webView.evaluateJavascript(script, null));
     }
 
     void dispatchNewBrowserTab(String rawUrl) {

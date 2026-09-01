@@ -1,6 +1,21 @@
 /* browser.css - LOFA provides only a true-fullscreen Dashboard host. */
 #browserView { background: var(--surface-input); }
-.browser-shell { position: absolute; inset: 0; min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-input); }
+/* 壳跑在 immersive 全屏, 系统栏不占布局 —— 于是挖孔/灵动岛正压在 Dashboard 页签条上。
+   内嵌文档自己看不见设备(iframe 里 env(safe-area-inset-*) 恒为 0), 所以由包体量出真实
+   遮挡带(MainActivity.observeSafeAreaInsets)写进 --lofa-safe-*, 这里只负责让位。 */
+.browser-shell {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding-top: var(--lofa-safe-top, 0px);
+  padding-right: var(--lofa-safe-right, 0px);
+  padding-bottom: var(--lofa-safe-bottom, 0px);
+  padding-left: var(--lofa-safe-left, 0px);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-input);
+}
 .browser-frame { display: block; width: 100%; height: 100%; border: 0; background: var(--surface-input); }
 
 /* The business chrome belongs to Dashboard. This tiny native-shell affordance is
@@ -9,13 +24,14 @@
 .browser-local-tools {
   position: absolute;
   z-index: 20;
-  top: calc(env(safe-area-inset-top, 0px) + 8px);
-  right: 8px;
+  top: calc(var(--lofa-safe-top, 0px) + 8px);
+  right: calc(var(--lofa-safe-right, 0px) + 8px);
   display: flex;
   gap: 6px;
   opacity: .72;
   transition: opacity .16s ease;
 }
+.browser-local-tools[hidden] { display: none; }
 .browser-local-tools:focus-within,
 .browser-local-tools:hover { opacity: 1; }
 .browser-local-btn {
