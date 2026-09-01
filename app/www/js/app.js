@@ -1,38 +1,36 @@
-// app.js — 启动外壳:字号/可达性 → 各 view init → 接线 → router.init 四 tab → 连接。
-//   Android 硬件返回按 §4b 优先级;OTA 检测 → toast + 我的红点;remote(B 档)反向控制。
-// 业务在各 view;本文件只管壳、路由接缝与连接。
-
+// LOFA is an Android shell around the current Dashboard build. It owns only
+// connection, diagnostics, OTA and the declared native bridge.
 import {
   store, connect, probeConnection, normBase, getSaved,
-  initFontScale, initA11yPrefs, setBadgeListener, setUpdateListener,
+  initFontScale, initA11yPrefs, setUpdateListener,
 } from './core.js'
 import * as router from './router.js'
-import * as sessionsView from './sessionsView.js'
-import * as chatView from './chatView.js'
-import * as termView from './termView.js'
-import * as reviewView from './reviewView.js'
-import * as projectsView from './projectsView.js'
 import * as settingsView from './settingsView.js'
-import * as notes from './notesView.js'
 import * as browserView from './browserView.js'
 import { startRemote } from './remote.js'
 
-const TABS = { sessions: 'sessionsView', review: 'reviewView', projects: 'projectsView', me: 'meView' }
+function openDashboardEntity(type, id, title) {
+  return browserView.openEntity(type, id, title)
+}
 
-// ── 连接成功:渲染我的、加载当前 tab、起 remote ─────────────────────────────
+function openDashboardDeepLink(value) {
+  const link = value && typeof value === 'object' ? value : {}
+  return openDashboardEntity(link.type, link.id, link.title)
+}
+
 async function onConnected() {
   await startRemote()
-  // startRemote 铸造/续期本机设备会话;在它之前加载的远端页面可能停在网关 401 登录页
-  // (跨源 iframe 读不到内容,只能重取)。放在这里 = 每次连上都让远端面重新过一次鉴权。
-  notes.reloadAfterConnect()
   browserView.reloadAfterConnect()
   settingsView.load()
-  loadTab(router.current() === 'sessionsView' ? 'sessions' : null)
+  await browserView.openHome()
 }
+
 function connectInit() {
   const saved = getSaved()
-  if (saved) connect(normBase(saved), onConnected, () => { if (!store.base) router.open('connect') })
-  else router.open('connect')   // §7h 首次无地址 → 直接落连接编辑页
+  if (saved) connect(normBase(saved), onConnected, () => {
+    if (!store.base) router.open('connect')
+  })
+  else router.open('connect')
 }
 
 let resumeTimer = null
@@ -41,82 +39,78 @@ function resumeConnections() {
   resumeTimer = setTimeout(() => {
     resumeTimer = null
     if (store.base) probeConnection(store.base)
-    chatView.reconnectNow()
-    termView.reconnectNow()
-    reviewView.reconnectNow()
   }, 120)
 }
 
-// ── tab 切换驱动数据加载(仅连上后) ─────────────────────────────────────────
-function loadTab(name) {
-  if (!store.base || !name) return
-  if (name === 'sessions') sessionsView.load()
-  else if (name === 'review') reviewView.load()
-  else if (name === 'projects') projectsView.load()
-  else if (name === 'me') settingsView.load()
-}
-
-// ── Android 硬件返回:软键盘 → 浮层 → pop → 非默认 tab 回默认 → 根页最小化 ──
 function onHardwareBack() {
-  if (reviewView.exitImmersive && reviewView.exitImmersive()) return
-  const ae = document.activeElement
-  if (ae && (ae.tagName === 'TEXTAREA' || ae.tagName === 'INPUT')) { ae.blur(); return }
+  const active = document.activeElement
+  if (active && (active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+    active.blur()
+    return
+  }
   if (!router.back()) {
-    const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App
-    if (A && A.minimizeApp) A.minimizeApp()
+    const app = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App
+    if (app && app.minimizeApp) app.minimizeApp()
   }
 }
 
-// ── 启动 ────────────────────────────────────────────────────────────────────
+function registerDashboardOpeners() {
+  router.registerOpener('connect', () => settingsView.openConnect())
+  router.registerOpener('browser', () => browserView.openHome())
+  router.registerOpener('code', () => browserView.openHome())
+  router.registerOpener('web', (value) => browserView.openWeb((value && value.url) || '', (value && value.title) || ''))
+  router.registerOpener('chat', (meta) => openDashboardEntity('cc_session', meta && meta.id, meta && (meta.name || meta.titleHint)))
+  router.registerOpener('term', (meta) => openDashboardEntity('cc_session', meta && meta.id, meta && meta.name))
+  router.registerOpener('session', (id) => openDashboardEntity('cc_session', id, id))
+  router.registerOpener('sessions', () => openDashboardEntity('multiagent', 'main', '会话'))
+  router.registerOpener('review-detail', (id) => openDashboardEntity('review_material', id, id))
+  router.registerOpener('review', (id) => openDashboardEntity(id ? 'review_material' : 'review_queue', id || 'main', id || '审阅'))
+  router.registerOpener('projects', () => openDashboardEntity('project_board', 'main', '项目'))
+  router.registerOpener('project-detail', (id) => openDashboardEntity('project', id, id))
+}
+
 function boot() {
   initFontScale()
   initA11yPrefs()
-
-  sessionsView.init()
-  chatView.init()
-  termView.init()
-  reviewView.init()
-  projectsView.init()
   settingsView.init({ onConnected })
   browserView.init()
-
-  // opener 注册(深链 / 通知点击 / remote.navigate 共用)
-  router.registerOpener('chat', (meta) => { chatView.open(meta); router.push('chatView') })
-  router.registerOpener('term', (meta) => { termView.open(meta); router.push('termView') })
-  router.registerOpener('review-detail', (id) => reviewView.openDetail(id))
-  router.registerOpener('project-detail', (id) => projectsView.openDetail(id))
-  router.registerOpener('notes', () => notes.openNotes())
-  router.registerOpener('code', () => browserView.openHome())
-  router.registerOpener('browser', () => browserView.openHome())
-  router.registerOpener('web', (p) => browserView.openWeb((p && p.url) || '', (p && p.title) || ''))
-  router.registerOpener('connect', () => settingsView.openConnect())
-  router.registerOpener('session', async (id) => {
-    router.tab('sessions')
-    return sessionsView.openSession(id)
-  })
-  router.registerOpener('review', (id) => { router.tab('review'); if (id) reviewView.openDetail(id) })
-
-  // 只在停在 tab 根页时加载列表:push 详情/对话/终端(view≠根)不触发重复拉取,pop 回根页再刷。
-  router.onChange(({ tab, view }) => { if (view === TABS[tab]) loadTab(tab) })
-
-  // core 健康/计数/OTA → 底 tab 角标 + 我的红点
-  setBadgeListener(({ review }) => router.setBadge('review', review))
+  router.init({ tabs: { me: 'meView' }, defaultTab: 'me' })
+  registerDashboardOpeners()
   setUpdateListener(() => settingsView.load())
 
-  router.init({ tabs: TABS, defaultTab: 'sessions' })
-
-  const A = window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.App
-  if (A && A.addListener) {
-    try { A.addListener('backButton', onHardwareBack) } catch (e) {}
-    try { A.addListener('appStateChange', (state) => { if (state && state.isActive) resumeConnections() }) } catch (e) {}
+  const app = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App
+  if (app && app.addListener) {
+    try { app.addListener('backButton', onHardwareBack) } catch (error) {}
+    try { app.addListener('appStateChange', (state) => { if (state && state.isActive) resumeConnections() }) } catch (error) {}
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resumeConnections() })
   window.addEventListener('pageshow', resumeConnections)
   window.addEventListener('online', resumeConnections)
-  if (A && A.getInfo) { try { A.getInfo().then((i) => { window.__lofaVersion = i.version || i.build; settingsView.load() }).catch(() => {}) } catch (e) {} }
+  if (app && app.getInfo) {
+    try {
+      app.getInfo().then((info) => {
+        window.__lofaVersion = info.version || info.build
+        settingsView.load()
+      }).catch(() => {})
+    } catch (error) {}
+  }
+
+  const notifications = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.LocalNotifications
+  if (notifications && notifications.addListener) {
+    try {
+      notifications.addListener('localNotificationActionPerformed', (action) => {
+        const notification = action && action.notification
+        const extra = notification && (notification.extra || notification.data)
+        if (extra && extra.lofa_deep_link) openDashboardDeepLink(extra.lofa_deep_link)
+      })
+    } catch (error) {}
+  }
+  window.addEventListener('lofa:file-share', () => {
+    openDashboardEntity('file_bridge', 'main', 'Agent 暂存区')
+  })
 
   connectInit()
 }
 
 boot()
-window.LOFA = { connect: connectInit, router }
+window.LOFA = { connect: connectInit, router, openDashboardDeepLink }

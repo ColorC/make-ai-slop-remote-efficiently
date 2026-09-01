@@ -1,20 +1,34 @@
 // termKeys 单测 — 附加键条纯逻辑:普通键 / 组合键 / CSI 方向 / 粘滞修饰状态机。
+// Archived local-terminal WIP; excluded from the single-frontend test suite.
 import { describe, it, expect } from 'vitest'
 import { KEY_ROWS, keySequence, createModifierState } from '../../../../app/www/js/termKeys.js'
 
 describe('KEY_ROWS 键位表对齐 §7d', () => {
-  it('第一行 = Esc / | ~ ↑ Home PgUp', () => {
-    expect(KEY_ROWS[0].map((k) => k.id)).toEqual(['Esc', '/', '|', '~', 'ArrowUp', 'Home', 'PgUp'])
+  it('第一行 = Esc Tab / | ~ ↑ Home PgUp', () => {
+    expect(KEY_ROWS[0].map((k) => k.id)).toEqual(['Esc', 'Tab', '/', '|', '~', 'ArrowUp', 'Home', 'PgUp'])
   })
-  it('第二行 = Tab Ctrl Alt ← ↓ → End', () => {
-    expect(KEY_ROWS[1].map((k) => k.id)).toEqual(['Tab', 'Ctrl', 'Alt', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'End'])
+  it('第二行 = Ctrl Alt ^C 换行 ← ↓ → End', () => {
+    expect(KEY_ROWS[1].map((k) => k.id)).toEqual(['Ctrl', 'Alt', 'CtrlC', 'Newline', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'End'])
   })
-  it('Ctrl / Alt 标为修饰键;/ 与 ~ 带长按二级', () => {
+  it('两行等宽:各 8 键(顶栏接管 ⌨ 后键条不再自带收起钮)', () => {
+    expect(KEY_ROWS.map((r) => r.length)).toEqual([8, 8])
+  })
+  it('Ctrl / Alt 标为修饰键;/ ~ PgUp 换行 带长按二级', () => {
     const flat = KEY_ROWS.flat()
     expect(flat.find((k) => k.id === 'Ctrl').mod).toBe('ctrl')
     expect(flat.find((k) => k.id === 'Alt').mod).toBe('alt')
     expect(flat.find((k) => k.id === '/').hold).toBe('\\')
     expect(flat.find((k) => k.id === '~').hold).toBe('`')
+    expect(flat.find((k) => k.id === 'PgUp').hold).toBe('PgDn')
+    expect(flat.find((k) => k.id === 'Newline').hold).toBe('LF')
+  })
+  it('长按二级键都能被 keySequence 解释(不存在只有标签没有序列的死键)', () => {
+    KEY_ROWS.flat().filter((k) => k.hold).forEach((k) => {
+      expect(keySequence(k.hold), k.id + ' 的长按二级 ' + k.hold).toBeTruthy()
+    })
+  })
+  it('^C 标 danger(与旁边的 Ctrl/Alt 视觉区分,防误按打断进程)', () => {
+    expect(KEY_ROWS.flat().find((k) => k.id === 'CtrlC').danger).toBe(true)
   })
 })
 
@@ -26,9 +40,10 @@ describe('keySequence 普通键', () => {
     expect(keySequence('`')).toBe('`')
     expect(keySequence('\\')).toBe('\\')
   })
-  it('Esc / Tab 命名键', () => {
+  it('Esc / Tab / Enter 命名键', () => {
     expect(keySequence('Esc')).toBe('\x1b')
     expect(keySequence('Tab')).toBe('\t')
+    expect(keySequence('Enter')).toBe('\r')
   })
   it('CSI 方向 / Home / End / PgUp / PgDn', () => {
     expect(keySequence('ArrowUp')).toBe('\x1b[A')
@@ -75,6 +90,28 @@ describe('keySequence 组合键', () => {
   it('Alt+Esc / Alt+Tab 加 ESC 前缀', () => {
     expect(keySequence('Esc', { alt: true })).toBe('\x1b\x1b')
     expect(keySequence('Tab', { alt: true })).toBe('\x1b\t')
+  })
+  it('Alt+Enter = ESC CR(移动端多行输入的线上表示)', () => {
+    expect(keySequence('Enter', { alt: true })).toBe('\x1b\r')
+  })
+})
+
+describe('成品键(raw):换行 / LF / ^C 不叠加粘滞修饰', () => {
+  it('「换行」键本身就是 Alt+Enter 的 ESC CR', () => {
+    expect(keySequence('Newline')).toBe('\x1b\r')
+    expect(keySequence('Newline')).toBe(keySequence('Enter', { alt: true }))
+  })
+  it('LF = 裸 \\n(=Ctrl+J),给只认 LF 的 TUI 兜底', () => {
+    expect(keySequence('LF')).toBe('\n')
+  })
+  it('^C = \\x03', () => {
+    expect(keySequence('CtrlC')).toBe('\x03')
+  })
+  it('Ctrl/Alt 锁定时也不会污染成品键(否则会发出 ESC ESC CR / ESC ^C 这类垃圾序列)', () => {
+    const mods = { ctrl: true, alt: true }
+    expect(keySequence('Newline', mods)).toBe('\x1b\r')
+    expect(keySequence('LF', mods)).toBe('\n')
+    expect(keySequence('CtrlC', mods)).toBe('\x03')
   })
 })
 

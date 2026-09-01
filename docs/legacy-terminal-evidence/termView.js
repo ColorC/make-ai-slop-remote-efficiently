@@ -5,6 +5,7 @@
 //     服→客 snapshot(重画)/output/exit;客→服 input/resize。
 //   附加键条纯逻辑在 termKeys.js;终端是内容层,容器实底无玻璃。
 
+// Archived local-terminal WIP; excluded from the single-frontend APK runtime.
 import { esc, termWsUrl, store, apiJson, api, toast, promptModal, confirmModal, LOG } from './core.js'
 import { icons, openMenu, openSheet, banner } from './ui.js'
 import { openReconnectingWs } from './ws.js'
@@ -61,9 +62,8 @@ function cwdTail(cwd) { const s = String(cwd || ''); const parts = s.split(/[\\/
 
 const raf = (typeof requestAnimationFrame === 'function') ? requestAnimationFrame : ((cb) => setTimeout(cb, 0))
 
-// 触屏后浏览器会补发 mouse 事件;鼠标兜底分支在此窗口内让路,防重复触发。
-let _lastTouch = 0
-function recentTouch() { return Date.now() - _lastTouch < 700 }
+// 长按阈值(修饰键锁定 / 二级字符浮泡共用一个值)。
+const HOLD_MS = 450
 
 // 单实例运行态:同一时刻只挂一个终端会话。切换/离开时 teardown。
 let cur = null   // { meta, term, fit, ws, els, mods, fontSize, alive, ... }
@@ -76,6 +76,7 @@ export function init() {
 function teardown() {
   if (!cur) return
   const c = cur; cur = null
+  dismissHold()
   try { if (c.ws) c.ws.leave() } catch (e) {}
   try { if (c._disposeTouchScroll) c._disposeTouchScroll() } catch (e) {}
   try { if (c._disposeMobileInput) c._disposeMobileInput() } catch (e) {}
@@ -106,16 +107,20 @@ export function open(meta) {
     '<div class="lg-nav-title" data-t="title">' + esc(title) + '</div>' +
     '<div class="lg-nav-sub"><span class="term-dot" data-t="dot"></span><span data-t="sub">' + esc(sub) + '</span></div>' +
     '</div>' +
-    '<div class="lg-nav-actions"><button class="lg-icon-btn" data-t="menu" aria-label="更多">' + icons.dots + '</button></div>' +
+    '<div class="lg-nav-actions">' +
+    '<button class="lg-icon-btn" data-t="kbtoggle" aria-label="附加键条" aria-pressed="false">' + icons.keyboard + '</button>' +
+    '<button class="lg-icon-btn" data-t="menu" aria-label="更多">' + icons.dots + '</button>' +
+    '</div>' +
     '</div>' +
     '<div class="term-wrap" data-t="wrap">' +
+    // 键条在终端**上方**:它在 flex 流里紧贴顶栏,物理上不可能压住最后一行(=CLI 的输入行)。
+    // 放在下方时任何键盘 inset 误差都会吃掉输入行,而输入行正是打字时唯一要看的地方。
+    buildKeysBar() +
     '<div class="term-body">' +
     '<div class="term-screen" id="termScreen"></div>' +
     '<div class="term-overlay show" data-t="overlay"><div class="term-overlay-card"><div class="term-overlay-title" data-t="ovtitle">连接中…</div><div class="term-overlay-actions" data-t="ovactions"></div></div></div>' +
     '<button class="term-latest" data-t="latest" aria-label="回到最新内容">↓ 最新</button>' +
-    '<button class="term-kfab" data-t="kfab" aria-label="呼出键盘">' + icons.keyboard + '</button>' +
     '</div>' +
-    buildKeysBar() +
     '</div>'
 
   const els = {
@@ -124,14 +129,15 @@ export function open(meta) {
     wrap: view.querySelector('[data-t="wrap"]'), screen: view.querySelector('#termScreen'),
     overlay: view.querySelector('[data-t="overlay"]'), ovtitle: view.querySelector('[data-t="ovtitle"]'),
     ovactions: view.querySelector('[data-t="ovactions"]'), keys: view.querySelector('#termKeys'),
-    kfab: view.querySelector('[data-t="kfab"]'), latest: view.querySelector('[data-t="latest"]'),
+    kbtoggle: view.querySelector('[data-t="kbtoggle"]'), latest: view.querySelector('[data-t="latest"]'),
   }
   view.querySelector('.lg-nav-back').addEventListener('click', () => router.pop())
 
   const c = { meta, id, els, mods: createModifierState(), fontSize: getFontSize(), alive: true, term: null, fit: null, ws: null, kb: 0, pin: false, snapshot: null, snapshotEpoch: 0 }
   cur = c
-  // 附加键条默认收起:软键盘弹起(kb>阈值)或键盘钮手动钉住才出现,不常驻占屏。
-  if (els.kfab) els.kfab.addEventListener('click', () => { c.pin = true; syncKeys(c); if (c.term) { try { c.term.focus() } catch (e) {} } })
+  // 附加键条默认收起:软键盘弹起(kb>阈值)或顶栏 ⌨ 手动钉住才出现,不常驻占屏。
+  // ⌨ 只开关键条,**不 focus 终端**——要输入法就点终端本身,别让"想按 Esc"顺带弹出键盘。
+  if (els.kbtoggle) els.kbtoggle.addEventListener('click', () => { c.pin = !c.pin; syncKeys(c) })
 
   if (!window.Terminal) {
     setStatus(c, 'ended', '终端组件未加载')
@@ -336,107 +342,131 @@ function showExit(c, reason) {
 function buildKeysBar() {
   const rows = KEY_ROWS.map((row) =>
     '<div class="term-krow">' + row.map((k) => {
-      const cls = 'term-key' + (k.mod ? ' term-key-mod' : '')
-      const hold = k.hold ? (' data-hold="' + esc(k.hold) + '"') : ''
+      const cls = 'term-key' + (k.mod ? ' term-key-mod' : '') + (k.danger ? ' term-key-danger' : '')
+      const hold = k.hold ? (' data-hold="' + esc(k.hold) + '" data-hold-label="' + esc(k.holdLabel || k.hold) + '"') : ''
       const mod = k.mod ? (' data-mod="' + esc(k.mod) + '"') : ''
       return '<button class="' + cls + '" data-key="' + esc(k.id) + '"' + mod + hold + '>' + esc(k.label) + '</button>'
     }).join('') + '</div>').join('')
   return '<div class="lg-keys" id="termKeys">' +
     '<div class="term-krows">' + rows + '</div>' +
-    '<button class="term-kb" data-t="kbtoggle" aria-label="键盘">' + icons.keyboard + '</button>' +
     '</div>'
 }
 
+// 修饰键点亮态回写 DOM(armed/locked)。
+function syncMods(c) {
+  if (!c.els.keys) return
+  Array.prototype.forEach.call(c.els.keys.querySelectorAll('.term-key-mod'), (btn) => {
+    const m = btn.getAttribute('data-mod')
+    btn.classList.toggle('armed', c.mods.state(m) === 'armed')
+    btn.classList.toggle('locked', c.mods.state(m) === 'locked')
+  })
+}
+
+function sendSeq(c, seq) { if (seq && c.ws) c.ws.send({ type: 'input', data: seq }) }
+
+// 键条接线。全部走 Pointer Events 单一路径,并在 pointerdown 上 preventDefault:
+//   · 焦点不离开当前元素 → 按键条不会让 xterm 重新取得焦点、也就不会弹出输入法;
+//   · 浏览器不再补发兼容 mousedown/mouseup/click → 不存在"这一下又落到终端上"的穿透。
+// 键条自己发 {type:'input'} 上行,与 xterm 焦点无关,所以旧代码里的 term.focus() 纯属副作用。
 function wireKeys(c) {
   const bar = c.els.keys
-  const refreshMods = () => {
-    Array.prototype.forEach.call(bar.querySelectorAll('.term-key-mod'), (btn) => {
-      const m = btn.getAttribute('data-mod')
-      btn.classList.toggle('armed', c.mods.state(m) === 'armed')
-      btn.classList.toggle('locked', c.mods.state(m) === 'locked')
-    })
-  }
+  // 键与键之间的缝隙、条本身的内边距也要吞掉,否则按空处仍会把焦点交给终端。
+  bar.addEventListener('pointerdown', (e) => e.preventDefault())
+  bar.addEventListener('contextmenu', (e) => e.preventDefault())
+
   Array.prototype.forEach.call(bar.querySelectorAll('.term-key'), (btn) => {
     const keyId = btn.getAttribute('data-key')
     const modName = btn.getAttribute('data-mod')
     const hold = btn.getAttribute('data-hold')
+    const holdLabel = btn.getAttribute('data-hold-label') || hold
 
-    if (modName) {
-      // 修饰键:点=tap(切 armed/off),长按=lock。触屏走 touch,鼠标走 mousedown。
-      let lp = null
-      btn.addEventListener('touchstart', () => { _lastTouch = Date.now(); lp = setTimeout(() => { lp = null; c.mods.lock(modName); refreshMods() }, 500) }, { passive: true })
-      btn.addEventListener('touchend', () => { _lastTouch = Date.now(); if (lp) { clearTimeout(lp); lp = null; c.mods.tap(modName); refreshMods() } })
-      btn.addEventListener('contextmenu', (e) => { e.preventDefault(); c.mods.lock(modName); refreshMods() })
-      btn.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || recentTouch()) return
-        let held = false; const t = setTimeout(() => { held = true; c.mods.lock(modName); refreshMods() }, 500)
-        const up = () => { clearTimeout(t); if (!held) { c.mods.tap(modName); refreshMods() }; document.removeEventListener('mouseup', up) }
-        document.addEventListener('mouseup', up)
-      })
-      return
+    let timer = null, held = false, down = false
+
+    const clear = () => {
+      if (timer) { clearTimeout(timer); timer = null }
+      btn.classList.remove('pressed')
+      down = false
     }
 
-    const sendKey = () => {
-      const seq = keySequence(keyId, c.mods.consume())
-      if (c.ws) c.ws.send({ type: 'input', data: seq })
-      refreshMods()
-      if (c.term) { try { c.term.focus() } catch (e) {} }
-    }
-
-    if (hold) {
-      // 长按二级字符:浮出小泡,点泡发二级;短按发主键。
-      let lp = null, fired = false
-      btn.addEventListener('touchstart', () => { _lastTouch = Date.now(); fired = false; lp = setTimeout(() => { lp = null; fired = true; showHoldBubble(c, btn, hold) }, 450) }, { passive: true })
-      btn.addEventListener('touchend', () => { _lastTouch = Date.now(); if (lp) { clearTimeout(lp); lp = null } if (!fired) sendKey() })
-      btn.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || recentTouch()) return
-        fired = false; const t = setTimeout(() => { fired = true; showHoldBubble(c, btn, hold) }, 450)
-        const up = () => { clearTimeout(t); if (!fired) sendKey(); document.removeEventListener('mouseup', up) }
-        document.addEventListener('mouseup', up)
-      })
-      btn.addEventListener('contextmenu', (e) => { e.preventDefault(); showHoldBubble(c, btn, hold) })
-      return
-    }
-
-    btn.addEventListener('click', sendKey)
+    btn.addEventListener('pointerdown', (e) => {
+      if (e.button != null && e.button > 0) return
+      e.preventDefault()
+      down = true; held = false
+      btn.classList.add('pressed')
+      if (!modName && !hold) return
+      timer = setTimeout(() => {
+        timer = null; held = true
+        if (modName) { c.mods.lock(modName); syncMods(c) }
+        else showHoldBubble(c, btn, hold, holdLabel)
+      }, HOLD_MS)
+    })
+    btn.addEventListener('pointerup', (e) => {
+      if (!down) return
+      e.preventDefault()
+      const wasHeld = held
+      clear()
+      if (wasHeld) return                       // 长按已生效(锁定 / 已出浮泡),抬起不再补发
+      if (modName) { c.mods.tap(modName); syncMods(c); return }
+      sendSeq(c, keySequence(keyId, c.mods.consume()))
+      syncMods(c)
+    })
+    btn.addEventListener('pointercancel', clear)
+    btn.addEventListener('pointerleave', clear)
   })
 
-  const kb = bar.querySelector('[data-t="kbtoggle"]')
-  if (kb) kb.addEventListener('click', () => toggleKeyboard(c))
-  refreshMods()
+  syncMods(c)
 }
 
-function showHoldBubble(c, anchor, ch) {
-  const old = c.els.keys.querySelector('.term-hold'); if (old) old.remove()
-  const bub = document.createElement('button'); bub.className = 'term-hold'; bub.textContent = ch
-  document.body.appendChild(bub)
+// 长按二级键浮泡。泡挂在一层铺满屏幕的 scrim 上:落在泡外的那一下只用来收泡,
+// 由 scrim 吞掉,绝不穿透到 .term-screen(旧实现正是在这里把输入法带出来的)。
+let _holdScrim = null
+function dismissHold() {
+  if (!_holdScrim) return
+  try { _holdScrim.remove() } catch (e) {}
+  _holdScrim = null
+}
+function showHoldBubble(c, anchor, holdId, label) {
+  dismissHold()
+  const scrim = document.createElement('div')
+  scrim.className = 'term-hold-scrim'
+  const bub = document.createElement('button')
+  bub.className = 'term-hold'
+  bub.textContent = label
+  scrim.appendChild(bub)
+  document.body.appendChild(scrim)
+  _holdScrim = scrim
+
+  // 泡一律吊在**整条键条之下**、水平对齐所在键:
+  //   · 挂键的上方会顶进顶栏(第一行)或盖住上一行的键(第二行——`换行` 的 \n 泡曾把 `|` 键整个盖掉);
+  //   · 挂键的下方对第一行同样会盖住第二行。
+  // 只有「整条之下」对两行都成立,而手指此刻正压在键上,泡落在条外不会被手指挡住。
   const r = anchor.getBoundingClientRect()
-  bub.style.left = (r.left + r.width / 2) + 'px'
-  bub.style.top = (r.top - 8) + 'px'
+  const bar = c.els.keys.getBoundingClientRect()
+  const half = 28   // 泡最小宽 40 + 左右 padding,取半宽兜住 translateX(-50%) 在两端的溢出
+  const vw = window.innerWidth || bar.right
+  bub.classList.add('below')
+  bub.style.left = Math.max(half + 4, Math.min(vw - half - 4, r.left + r.width / 2)) + 'px'
+  bub.style.top = (bar.bottom + 8) + 'px'
   raf(() => bub.classList.add('show'))
-  const send = () => {
-    const seq = keySequence(ch, c.mods.consume())
-    if (c.ws) c.ws.send({ type: 'input', data: seq })
-    dismiss(); if (c.term) { try { c.term.focus() } catch (e) {} }
-  }
-  const dismiss = () => { bub.remove(); document.removeEventListener('click', outside, true) }
-  const outside = (e) => { if (e.target !== bub) dismiss() }
-  bub.addEventListener('click', (e) => { e.stopPropagation(); send() })
-  setTimeout(() => document.addEventListener('click', outside, true), 0)
+
+  scrim.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); e.stopPropagation()
+    if (e.target === bub) { sendSeq(c, keySequence(holdId, c.mods.consume())); syncMods(c) }
+    dismissHold()
+  })
+  // scrim 存续期间兜掉一切 click,防止兼容事件漏到底下的终端。
+  scrim.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation() })
 }
 
-function toggleKeyboard(c) {
-  if (!c.term) return
-  const ta = c.term.textarea
-  const active = document.activeElement === ta
-  try { if (active) ta.blur(); else c.term.focus() } catch (e) {}
-  if (active) { c.pin = false; syncKeys(c) }   // 收键盘同时解除手动钉住,键条随之收起
-}
-
-// 键条显隐 = 软键盘弹起(kb>60) 或 手动钉住;变化会改终端高度,随手 refit。
+// 键条显隐 = 软键盘弹起(kb>60) 或 顶栏 ⌨ 手动钉住;变化会改终端高度,随手 refit。
+// 钉住是显式用户意图,不因键盘收起而被悄悄清掉(要收就再点一次 ⌨)。
 function syncKeys(c) {
   if (!c.els.wrap) return
   const on = c.kb > 60 || !!c.pin
+  if (c.els.kbtoggle) {
+    c.els.kbtoggle.setAttribute('aria-pressed', c.pin ? 'true' : 'false')
+    c.els.kbtoggle.classList.toggle('on', !!c.pin)
+  }
   if (c.els.wrap.classList.contains('kb-open') !== on) {
     c.els.wrap.classList.toggle('kb-open', on)
     doFit(c)
@@ -541,12 +571,11 @@ function wireResize(c) {
   const vv = window.visualViewport
   if (vv) {
     c._vvh = () => {
-      // 键盘弹起:visualViewport 收缩。以 --kb 抬起包裹层底 padding,附加键条随之吸在键盘上方,
-      // 终端区同步缩短并重新 fit。键盘收起 kb≈0,键条回落屏底。
+      // 键盘弹起:visualViewport 收缩。以 --kb 抬起包裹层底 padding,终端区同步缩短并重新 fit,
+      // 最后一行(=CLI 输入行)始终贴在键盘上沿之上。键条在顶部,不参与这段 inset 账。
       const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop))
       c.els.wrap.style.setProperty('--kb', kb + 'px')
       c.kb = kb
-      if (kb > 60) c.pin = false   // 真键盘接管后,收起键盘即收起键条
       syncKeys(c)
       doFit(c)
     }

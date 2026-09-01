@@ -77,7 +77,7 @@ test('LOFA is a chrome-free host and Dashboard owns the only tab strip', async (
   await expect(page.locator('.browser-tab')).toHaveCount(0)
   await expect(dashboard.locator('.dashboard-tab')).toHaveCount(1)
   await expect(dashboard.locator('#keep')).toHaveValue('preserved state')
-  await expect(page.locator('#bottomNav')).not.toHaveClass(/show/)
+  await expect(page.locator('#bottomNav')).toHaveCount(0)
   await expect.poll(() => page.locator('#app').evaluate((el) => getComputedStyle(el).paddingLeft)).toBe('0px')
 
   await dashboard.locator('#open-child').click()
@@ -116,4 +116,53 @@ test('LOFA is a chrome-free host and Dashboard owns the only tab strip', async (
   await expect(dashboard.locator('.dashboard-tab')).toHaveCount(2)
   expect(context.pages()).toHaveLength(1)
   expect(errors).toEqual([])
+})
+
+test('Android notifications and file shares deep-link into Dashboard-owned tabs', async ({ page }) => {
+  await setupRoutes(page)
+  await page.addInitScript(() => {
+    window.__notificationListeners = {}
+    Object.defineProperty(window, 'Capacitor', {
+      configurable: true,
+      value: {
+        isNativePlatform: () => true,
+        Plugins: {
+          LocalNotifications: {
+            addListener: (name, listener) => {
+              window.__notificationListeners[name] = listener
+              return Promise.resolve({ remove: async () => {} })
+            },
+          },
+        },
+      },
+    })
+  })
+
+  await page.goto('/')
+  await page.evaluate(async (base) => {
+    const core = await import('/js/core.js')
+    const browser = await import('/js/browserView.js')
+    core.store.base = base
+    await browser.openHome()
+  }, BASE)
+  const dashboard = page.frameLocator('.browser-frame')
+  await expect(dashboard.locator('.dashboard-tab')).toHaveCount(1)
+  await expect.poll(() => page.evaluate(() => typeof window.__notificationListeners.localNotificationActionPerformed)).toBe('function')
+
+  await page.evaluate(() => window.__notificationListeners.localNotificationActionPerformed({
+    notification: {
+      extra: {
+        lofa_deep_link: { type: 'review_queue', id: 'main', title: 'Review Queue' },
+      },
+    },
+  }))
+  await expect(dashboard.locator('.dashboard-tab')).toHaveCount(2)
+  await expect(dashboard.locator('.dashboard-tab').nth(1)).toContainText('Review Queue')
+  await expect(dashboard.locator('.dashboard-page.active iframe')).toHaveAttribute('src', /open_type=review_queue.*open_id=main/)
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('lofa:file-share', {
+    detail: { uri: 'content://lofa/share/1', mime: 'text/plain' },
+  })))
+  await expect(dashboard.locator('.dashboard-tab')).toHaveCount(3)
+  await expect(dashboard.locator('.dashboard-page.active iframe')).toHaveAttribute('src', /open_type=file_bridge.*open_id=main/)
 })

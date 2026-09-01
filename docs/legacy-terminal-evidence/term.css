@@ -3,6 +3,7 @@
    同屏玻璃 ≤2:顶栏 + 附加键条。 */
 
 /* 包裹层:填满 nav 以下;--kb 为软键盘高度,抬起底 padding 让键条吸键盘上方。 */
+/* Archived local-terminal WIP; excluded from the single-frontend APK runtime. */
 .term-wrap {
   flex: 1; min-height: 0; display: flex; flex-direction: column;
   padding-bottom: var(--kb, 0px); box-sizing: border-box;
@@ -29,9 +30,10 @@
 /* 终端输出滚动区(xterm-viewport 是真滚动容器):overscroll 锁链,滚到底不外泄给视图栈 */
 .term-screen .xterm-viewport { background: transparent !important; overscroll-behavior: contain; }
 
-/* 浏览历史时显式给出回到底部入口；默认隐藏，不遮挡终端输入。 */
+/* 浏览历史时显式给出回到底部入口；默认隐藏（滚到底即消失），不遮挡终端输入行。
+   注意：这是终端区里唯一允许的悬浮件——任何常驻底部浮钮都会压住 CLI 的输入行。 */
 .term-latest {
-  position: absolute; right: 68px; bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 3;
+  position: absolute; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 3;
   min-height: 38px; padding: 0 13px; border-radius: 999px;
   background: var(--glass-nav-fill); color: var(--fg);
   -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
@@ -53,28 +55,24 @@
 .term-overlay-title { font-size: 15px; color: var(--fg-2); line-height: 1.5; }
 .term-overlay-actions { margin-top: 14px; display: flex; justify-content: center; }
 
-/* ── 附加键条(玻璃 nav 档)——默认隐藏,键盘弹起(或键盘钮手动钉住)才出现,不占常驻屏幕 ── */
+/* ── 附加键条(玻璃 nav 档)——在终端**上方**,紧贴顶栏 ──
+   为什么在上方:键条在下方时,只要键盘 inset(--kb)与 WebView 自身 resize 出现任何一点重复或
+   欠算,被吃掉的就是最后一行——而最后一行正是 CLI 的输入行,也是打字时唯一要看的东西。
+   放到顶栏之下后,输入行永远是「键盘上沿之上的那一行」,与键条显隐完全解耦。
+   默认仍隐藏:键盘弹起(kb>60)或顶栏 ⌨ 手动钉住才出现,不常驻占屏。
+   touch-action: manipulation 去掉 300ms 点击延迟与双击缩放,配合 JS 侧 pointerdown 的
+   preventDefault(不让焦点离开 → 按键条不会弹输入法、也不产生兼容 click 穿透)。 */
 .lg-keys {
   flex: 0 0 auto; display: none; gap: 6px; align-items: stretch;
-  padding: 6px 6px max(6px, env(safe-area-inset-bottom));
+  padding: 6px;
   background: var(--glass-nav-fill);
   -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
+  border-top: 1px solid var(--line);       /* 与顶栏玻璃之间留一道发丝线,免得两层玻璃糊成一片 */
   box-shadow: var(--glass-edge);
+  touch-action: manipulation;
 }
 .term-wrap.kb-open .lg-keys { display: flex; }
 
-/* 键条收起时的召唤钮:右下角半透明小浮钮(点=呼出键盘+键条) */
-.term-kfab {
-  position: absolute; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 3;
-  width: 44px; height: 44px; border-radius: 50%;
-  background: var(--glass-nav-fill);
-  -webkit-backdrop-filter: var(--glass-nav-blur); backdrop-filter: var(--glass-nav-blur);
-  border: 1px solid var(--line); color: var(--fg-2);
-  font-size: 20px; display: grid; place-items: center; opacity: .82;
-}
-.term-kfab:active { opacity: 1; }
-.term-kfab svg { width: 22px; height: 22px; }
-.term-wrap.kb-open .term-kfab { display: none; }
 .term-krows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .term-krow { display: flex; gap: 6px; }
 .term-key {
@@ -85,23 +83,22 @@
   display: grid; place-items: center;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   -webkit-user-select: none; user-select: none;
+  touch-action: manipulation;
 }
-.term-key:active { background: var(--surface); }
+/* pointerdown 被 preventDefault 后 :active 在部分 WebView 不再触发,按下反馈走显式类。 */
+.term-key:active, .term-key.pressed { background: var(--surface); }
 .term-key-mod.armed { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
 .term-key-mod.locked { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 650; }
-.term-kb {
-  flex: 0 0 auto; width: 44px; border-radius: 10px;
-  background: var(--surface-2); color: var(--fg-2);
-  border: 1px solid var(--line);
-  font-size: 20px; display: grid; place-items: center;
-  -webkit-user-select: none; user-select: none;
-}
-.term-kb:active { background: var(--surface); }
-.term-kb svg { width: 20px; height: 20px; }
+/* ^C 会打断正在跑的进程:给一点危险色暗示,免得跟旁边的 Ctrl/Alt 误按混淆。 */
+.term-key-danger { color: var(--bad); background: var(--bad-soft); }
 
-/* 长按二级字符浮泡 */
+/* 长按二级键浮泡 + 吞事件的 scrim(泡外那一下只收泡,绝不落到终端上) */
+.term-hold-scrim {
+  position: fixed; inset: 0; z-index: var(--z-layer);
+  background: transparent; touch-action: none;
+}
 .term-hold {
-  position: fixed; z-index: var(--z-layer);
+  position: fixed; z-index: 1;
   min-width: 40px; height: 40px; padding: 0 12px;
   background: var(--glass-sheet-fill);
   -webkit-backdrop-filter: var(--glass-sheet-blur); backdrop-filter: var(--glass-sheet-blur);
@@ -112,8 +109,11 @@
   transition: opacity var(--t-menu) var(--ease-out), transform var(--t-menu) var(--ease-spring);
 }
 .term-hold.show { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+/* 泡吊在整条键条之下(水平对齐所在键),这样它既不顶进顶栏也不盖住任何一颗键。 */
+.term-hold.below { transform: translate(-50%, 0) scale(.9); }
+.term-hold.below.show { transform: translate(-50%, 0) scale(1); }
 
-/* ══ 平板 ≥600(--bp-phone):附加键条不全宽拉伸,键簇收拢为居中限宽(键盘收起钮仍贴右缘)。 ══ */
+/* ══ 平板 ≥600(--bp-phone):附加键条不全宽拉伸,键簇收拢为居中限宽。 ══ */
 @media (min-width: 600px) {
   .term-krows { flex: 0 1 680px; margin-left: auto; margin-right: auto; }
 }

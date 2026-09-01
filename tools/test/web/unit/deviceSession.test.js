@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { api, connect, store, termWsUrl, wsUrl } from '../../../../app/www/js/core.js'
+import { api, connect, store } from '../../../../app/www/js/core.js'
 
 function jsonResponse(body) {
   return {
@@ -18,41 +18,25 @@ describe('paired LOFA web session', () => {
     globalThis.fetch = vi.fn()
   })
 
-  it('includes the HttpOnly device cookie on cross-origin API requests', async () => {
+  it('includes the HttpOnly device cookie on cross-origin shell API requests', async () => {
     globalThis.fetch.mockResolvedValue(jsonResponse({ ok: true }))
-
-    await api('/api/projects')
-
+    await api('/api/android/apk/version')
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'https://10.3.43.246:12443/api/projects',
+      'https://10.3.43.246:12443/api/android/apk/version',
       expect.objectContaining({ credentials: 'include' }),
     )
   })
 
-  it('establishes the device session before background API polling starts', async () => {
+  it('runs the connected callback before OTA probing', async () => {
     const calls = []
     globalThis.fetch.mockImplementation(async (url) => {
       calls.push(String(url))
-      return jsonResponse({ ok: true })
+      return jsonResponse({ ok: true, manifest: null })
     })
-
-    await connect(
-      'https://10.3.43.246:12443',
-      async () => { calls.push('device-session-ready') },
-    )
-
+    await connect('https://10.3.43.246:12443', async () => { calls.push('device-session-ready') })
+    await Promise.resolve()
     expect(calls[0]).toContain('/api/healthz')
     expect(calls[1]).toBe('device-session-ready')
-    expect(calls.slice(2).some((entry) => entry.includes('/api/'))).toBe(true)
-  })
-
-  it('advertises the current PTY protocol without changing chat WebSocket URLs', () => {
-    expect(termWsUrl('pty id')).toBe(
-      'wss://10.3.43.246:12443/api/cc/sessions/pty%20id/ws' +
-      '?client_protocol=focused-visible-v1',
-    )
-    expect(wsUrl('chat id')).toBe(
-      'wss://10.3.43.246:12443/api/cc/chat/sessions/chat%20id/ws',
-    )
+    expect(calls.slice(2).some((entry) => entry.includes('/api/android/apk/version'))).toBe(true)
   })
 })

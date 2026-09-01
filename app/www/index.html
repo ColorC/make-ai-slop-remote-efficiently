@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
@@ -9,69 +9,20 @@
 <link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/base.css">
 <link rel="stylesheet" href="css/components.css">
-<link rel="stylesheet" href="css/views/sessions.css">
-<link rel="stylesheet" href="css/views/chat.css">
-<link rel="stylesheet" href="css/views/term.css">
-<link rel="stylesheet" href="css/views/review.css">
-<link rel="stylesheet" href="css/views/projects.css">
 <link rel="stylesheet" href="css/views/settings.css">
-<link rel="stylesheet" href="css/views/misc.css">
 <link rel="stylesheet" href="css/views/browser.css">
-<link rel="stylesheet" href="vendor/xterm.css">
-<script src="vendor/xterm.js"></script>
-<script src="vendor/addon-fit.js"></script>
-<script src="vendor/addon-webgl.js"></script>
-<script src="vendor/addon-unicode-graphemes.js"></script>
-<script src="vendor/addon-unicode11.js"></script>
 </head>
 <body>
-<!-- ambient 承托层:蓝图 scene(#091a3e 深底+格纸纹理,静止无动画);html.no-ambient 整层关闭(纯实底兜底) -->
 <div id="ambient"></div>
-
 <div id="app">
-  <!-- 连接状态条(全 tab 可见) -->
   <div id="banner"><div id="bannerBar" class="lg-banner"><span class="lg-banner-dot"></span><span class="lg-banner-text"></span></div></div>
-
-  <!-- 视图栈:全部 view 空容器,内部 DOM 由各自模块 init() 渲染 -->
   <div id="viewport">
-    <section class="view" id="sessionsView"></section>
-    <section class="view" id="chatView"></section>
-    <section class="view" id="termView"></section>
-    <section class="view split-master" id="reviewView"></section>
-    <section class="view split-detail" id="reviewDetailView"></section>
-    <section class="view split-master" id="projectsView"></section>
-    <section class="view split-detail" id="projectDetailView"></section>
     <section class="view" id="meView"></section>
     <section class="view" id="connectView"></section>
-    <section class="view" id="notesView"></section>
     <section class="view" id="browserView"></section>
   </div>
-
-  <!-- 底部 4-tab(常驻玻璃条) -->
-  <nav id="bottomNav">
-    <button class="lg-tab" data-tab="sessions">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <span>会话</span>
-    </button>
-    <button class="lg-tab" data-tab="review">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      <span>审阅</span>
-      <span class="lg-tab-dot" data-badge="review"></span>
-    </button>
-    <button class="lg-tab" data-tab="projects">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M3 10h6"/></svg>
-      <span>项目</span>
-    </button>
-    <button class="lg-tab" data-tab="me">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>
-      <span>我的</span>
-      <span class="lg-tab-dot" data-badge="me"></span>
-    </button>
-  </nav>
 </div>
-
 <div id="toast"></div>
-
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

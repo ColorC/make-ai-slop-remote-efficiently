@@ -31,6 +31,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ApkInstaller.class);
         registerPlugin(DeviceAutomation.class);
         registerPlugin(ExternalBrowser.class);
+        registerPlugin(ExternalWebview.class);
         super.onCreate(savedInstanceState);
         DeviceBridgeService.startIfConfigured(this);
         DevTunnelService.startIfConfigured(this);   // Reconnect the reverse debug tunnel when configured.
@@ -39,9 +40,9 @@ public class MainActivity extends BridgeActivity {
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         if (webView != null) {
-            // Remote pages run in cross-origin iframes. Keep auth cookies and route
-            // target=_blank/window.open through LofaWebChromeClient; browserView then
-            // classifies internal URLs into Dashboard tabs and public URLs to Android's browser.
+            // Dashboard itself remains the single remote shell. Pages opened inside
+            // its web tabs use ExternalWebview, avoiding iframe-only CSP/XFO failures.
+            // Keep popup interception here for the Dashboard document itself.
             cookieManager.setAcceptThirdPartyCookies(webView, true);
             WebSettings settings = webView.getSettings();
             settings.setSupportMultipleWindows(true);
@@ -51,6 +52,7 @@ public class MainActivity extends BridgeActivity {
 
         applyImmersiveMode();
         handleDevTunnelIntent(getIntent());
+        handleFileShareIntent(getIntent());
     }
 
     @Override
@@ -58,6 +60,7 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleDevTunnelIntent(intent);
+        handleFileShareIntent(intent);
     }
 
     @Override
@@ -101,7 +104,7 @@ public class MainActivity extends BridgeActivity {
         );
     }
 
-    private void dispatchNewBrowserTab(String rawUrl) {
+    void dispatchNewBrowserTab(String rawUrl) {
         if (rawUrl == null) return;
         Uri uri = Uri.parse(rawUrl);
         String scheme = uri.getScheme();
@@ -111,6 +114,23 @@ public class MainActivity extends BridgeActivity {
         String script = "window.dispatchEvent(new CustomEvent('lofa:new-window',{detail:{url:"
             + JSONObject.quote(rawUrl) + "}}));";
         runOnUiThread(() -> mainWebView.evaluateJavascript(script, null));
+    }
+
+    /**
+     * ACTION_SEND is only an ingress signal here. The shell routes it to the
+     * Dashboard-owned File Bridge entity; it does not grow a local file browser.
+     * Keep the URI as opaque diagnostics data and never evaluate sender content.
+     */
+    private void handleFileShareIntent(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return;
+        Uri uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        String mime = intent.getType();
+        WebView webView = getBridge().getWebView();
+        if (webView == null) return;
+        String script = "window.dispatchEvent(new CustomEvent('lofa:file-share',{detail:{uri:"
+            + JSONObject.quote(uri == null ? "" : uri.toString()) + ",mime:"
+            + JSONObject.quote(mime == null ? "" : mime) + "}}));";
+        runOnUiThread(() -> webView.post(() -> webView.evaluateJavascript(script, null)));
     }
 
     /**

@@ -320,13 +320,41 @@ Replit/Cursor/GitHub Mobile/VS Code;液态玻璃:iOS 26 HIG/WWDC26/移动 WebVie
   output→`term.write(data)`;exit→显示终端上覆盖层「会话已结束(reason)」+「回列表」按钮;
   onReconnecting→banner;`term.onData→{type:'input',data}`;resize(fit 后 cols/rows 变化)→
   `{type:'resize',cols,rows}`(300ms debounce)。
-- **附加键条**(玻璃 nav 档;termKeys.js 纯逻辑;2026-07-16 修订:**默认隐藏**——软键盘弹起
-  (visualViewport kb>60)或右下 ⌨ 浮钮手动钉住才出现,不常驻占屏;收键盘即收键条):
-  - 2 行:`Esc  /  |  ~  ↑  Home  PgUp` / `Tab  Ctrl  Alt  ←  ↓  →  End`(以 spec 为准的固定键位,
-    不做自定义拖拽——v2 范围);最右固定「⌨」键盘呼出/收起钮。
-  - Ctrl/Alt 粘滞:点亮→下一个字符键组合发送(^A 等 C0 控制码映射),再点取消;长按 Ctrl 锁定。
-  - 键宽=均分,高 40px;长按 `/` 出二级 `\`,长按 `~` 出 `` ` ``(浮出小泡)。
-  - 附加键条只在终端屏显示,跟随键盘 inset(visualViewport)吸在键盘上方;键盘收起时仍常驻屏底。
+- **附加键条**(玻璃 nav 档;termKeys.js 纯逻辑;**默认隐藏**——软键盘弹起(visualViewport kb>60)
+  或顶栏 ⌨ 手动钉住才出现,不常驻占屏)。**2026-08-18 三次修订**(实机不可用三连:挡输入行 /
+  点击穿透弹输入法 / 拼不出 Alt+回车),定位与交互全部重订:
+  - **位置=终端上方,紧贴顶栏**(不再在屏底)。理由是机制性的:键条在下方时,`--kb` 键盘 inset
+    与 WebView 自身 resize 只要有一点重复或欠算,被吃掉的就是最后一行——而最后一行正是 CLI 的
+    输入行,是打字时唯一要看的东西。移到上方后「输入行 = 键盘上沿之上那一行」与键条显隐解耦。
+  - **终端区内不允许常驻悬浮件**。原右下角 ⌨ 浮钮(`.term-kfab`)已删除——它 44×44 常压在
+    输入框右端;开关移入顶栏 `lg-icon-btn`(`data-t="kbtoggle"`,`aria-pressed`)。仅保留
+    `.term-latest`(↓ 最新),它只在滚离底部时出现,滚到底即消失,不与输入行同时在场。
+  - **⌨ 只开关键条,不 focus 终端**。要输入法就点终端本身。旧实现里每颗键按完都
+    `term.focus()`,在 Android 上等于「按 Esc 顺带弹出输入法」。键条自己发
+    `{type:'input'}` 上行,与 xterm 焦点无关,那次 focus 纯属副作用。钉住是显式意图,
+    不再因键盘收起被悄悄清掉(要收再点一次 ⌨)。
+  - **事件模型 = 单一 Pointer Events 路径,`pointerdown` 一律 `preventDefault()`**
+    (键条容器与每颗键都拦,连键与键之间的缝隙也拦)。这同时解决两件事:焦点不离开当前元素
+    → 不弹输入法;浏览器不补发兼容 `mousedown/mouseup/click` → 不存在「这一下又落到终端上」的
+    穿透。旧的 touch/mouse 双路径 + `recentTouch()` 时间窗兜底已删除。
+  - **长按浮泡挂在铺满屏的 `.term-hold-scrim` 上**,泡外那一下由 scrim 吞掉只用来收泡——
+    旧实现把泡挂在 `document.body`、泡外的点击直接落到 `.term-screen`,正是穿透弹输入法的第二个源。
+    键条在顶部后浮泡空间不足会自动翻到键的下方(`.term-hold.below`)。
+  - 2 行 × **8 键**(顶栏接管 ⌨ 后腾出的 44px 用来补键;以 spec 为准的固定键位,不做自定义拖拽):
+    - `Esc  Tab  /  |  ~  ↑  Home  PgUp`
+    - `Ctrl  Alt  ^C  换行  ←  ↓  →  End`
+  - **新增三键补齐移动端拼不出的组合**:
+    - `换行` = **ESC CR(`\x1b\r`)**,即 Alt/Option+Enter 的线上表示。Claude Code / Codex CLI
+      等 Ink 系 TUI 读作「插入换行而不提交」;软键盘的回车只能提交,这是移动端唯一稳定可达的
+      多行输入手段。长按出二级 `\n`(裸 LF = Ctrl+J),给只认 LF 的 TUI 兜底。
+    - `^C` = `\x03`(SIGINT)。粘滞 Ctrl 只对键条上的字符键生效,而键条没有 `c` 键,
+      所以在此之前 Ctrl+C 在移动端根本拼不出来。标 `danger` 色以防误按。
+    - `PgDn` 走 `PgUp` 长按(此前 `NAMED` 里有序列却没有任何键位入口)。
+  - **成品键(`raw`)不叠加粘滞修饰**:`换行`/`LF`/`^C` 的序列里已经含修饰,否则 Alt 锁定时
+    `换行` 会发出 `ESC ESC CR`、`^C` 会发出 `ESC ^C`,两者都是垃圾序列。
+  - Ctrl/Alt 粘滞:点亮→下一个字符键组合发送(^A 等 C0 控制码映射),再点取消;长按锁定。
+  - 键宽=均分(8 键在 360dp 屏约 38px,与系统键盘自身键宽同量级),高 44px;按下反馈走显式
+    `.pressed` 类(`pointerdown` 被 preventDefault 后 `:active` 在部分 WebView 不再触发)。
 - 手势:双指捏合调 fontSize(9-20 夹取,实时 fit+resize,存档);长按=xterm 原生选择复制
   (`term.onSelectionChange`→浮出「复制」小钮);**不做单指横滑切会话**(留给系统返回手势)。
 - 字号也可从三点菜单「终端字号」radio sheet 调(可达性兜底)。
