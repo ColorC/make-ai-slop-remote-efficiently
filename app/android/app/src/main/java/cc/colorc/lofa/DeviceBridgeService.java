@@ -105,6 +105,8 @@ public final class DeviceBridgeService extends Service {
                 .put("screenshot")
                 .put("ui_tree")
                 .put("tap")
+                .put("swipe")
+                .put("scroll")
                 .put("click_text")
                 .put("set_text")
                 .put("global_action")

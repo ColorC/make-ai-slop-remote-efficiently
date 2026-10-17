@@ -4,7 +4,7 @@
 //     automation_result(回执落库)、AUTOMATION_OPS(op 白名单)、pairing-window/pair(配对)。
 //   DeviceBridgeService.java: 前台服务 poll→执行→回执 {device_id,command_id,sequence,ok,result};
 //     stage_media / cleanup_debug_media 由桥本身处理(其余 op 转交无障碍执行器)。
-//   LofaAccessibilityService.java: 系统级执行器 ui_tree/tap/click_text/set_text/global_action/
+//   LofaAccessibilityService.java: 系统级执行器 ui_tree/tap/swipe/scroll/click_text/set_text/global_action/
 //     launch_app/launch_label/screenshot/status 的真实返回字段。
 // 纯 schema 契约: 不连真机、不起服务, 只锁 payload/回执形态与非法样本被拒。
 import { describe, it, expect } from 'vitest'
@@ -35,7 +35,7 @@ describe('automation 命令包 schema', () => {
     expect(v('command')(COMMAND)).toBe(true)
   })
   it('全部 AUTOMATION_OPS 都是合法 op', () => {
-    for (const op of ['status', 'screenshot', 'ui_tree', 'tap', 'click_text', 'set_text',
+    for (const op of ['status', 'screenshot', 'ui_tree', 'tap', 'swipe', 'scroll', 'click_text', 'set_text',
       'global_action', 'launch_app', 'launch_label', 'stage_media', 'cleanup_debug_media']) {
       expect(v('command')({ ...COMMAND, op })).toBe(true)
     }
@@ -64,6 +64,10 @@ const VALID_ARGS = [
   ['tapArgs', { nx: 0, ny: 0 }],
   ['tapArgs', { nx: 1, ny: 1 }],
   ['tapArgs', { nx: 0.42, ny: 0.73 }],
+  ['swipeArgs', { nx1: 0.5, ny1: 0.7, nx2: 0.5, ny2: 0.4 }],
+  ['swipeArgs', { nx1: 0, ny1: 1, nx2: 1, ny2: 0, duration_ms: 600 }],
+  ['scrollArgs', { direction: 'forward' }],
+  ['scrollArgs', { direction: 'backward', view_id: 'com.xingin.xhs:id/recyclerView' }],
   ['clickTextArgs', { text: '发布' }],
   ['clickTextArgs', { text: '发布', exact: false }],
   ['setTextArgs', { text: '正文内容' }],
@@ -86,6 +90,11 @@ const INVALID_ARGS = [
   ['tapArgs', { nx: 1.5, ny: 0.5 }],           // 归一化坐标越界(执行器会拒)
   ['tapArgs', { nx: -0.1, ny: 0.5 }],          // 负坐标
   ['tapArgs', { x: 100, y: 200 }],             // 像素坐标非本 op 契约(要归一化)
+  ['swipeArgs', { nx1: 0.5, ny1: 0.7, nx2: 0.5 }], // 缺 ny2
+  ['swipeArgs', { nx1: 0.5, ny1: 1.2, nx2: 0.5, ny2: 0.4 }], // 归一化坐标越界
+  ['swipeArgs', { x1: 500, y1: 1600, x2: 500, y2: 800 }], // 像素坐标非本 op 契约
+  ['scrollArgs', {}],                          // 缺 direction
+  ['scrollArgs', { direction: 'down' }],       // 方向只认 forward / backward
   ['clickTextArgs', {}],                       // 缺 text
   ['clickTextArgs', { text: '' }],             // 空 text
   ['globalActionArgs', { action: 'swipe' }],   // 非白名单动作
@@ -119,6 +128,9 @@ const VALID_RESULTS = [
   ['uiTreeResult', { package: 'com.xingin.xhs', nodes: [UI_NODE], timed_out: false, truncated: false }],
   ['uiTreeResult', { package: 'com.xingin.xhs', nodes: [], timed_out: true, truncated: true }],
   ['tapResult', { dispatched: true, x: 540, y: 1200 }],
+  ['swipeResult', { dispatched: true, x1: 540, y1: 1680, x2: 540, y2: 960, duration_ms: 350 }],
+  ['scrollResult', { scrolled: true, direction: 'forward', class: 'androidx.recyclerview.widget.RecyclerView', view_id: '', bounds: '0,300,1080,2200' }],
+  ['scrollResult', { scrolled: false, direction: 'backward', class: 'android.widget.ScrollView', view_id: 'com.xingin.xhs:id/list', bounds: '0,0,1080,2400' }],
   ['clickTextResult', { clicked: true, text: '发布' }],
   ['setTextResult', { changed: true, characters: 4, view_id: 'com.xingin.xhs:id/title' }],
   ['globalActionResult', { performed: true, action: 'back' }],
@@ -133,6 +145,9 @@ const VALID_RESULTS = [
 
 const INVALID_RESULTS = [
   ['tapResult', { dispatched: true }],                          // 缺 x/y
+  ['swipeResult', { dispatched: true, x: 540, y: 1200 }],       // 应为起止两点
+  ['swipeResult', { dispatched: true, x1: 1, y1: 2, x2: 3, y2: 4, duration_ms: 5000 }], // 时长超执行器上限
+  ['scrollResult', { scrolled: true, direction: 'forward' }],    // 缺节点 class/view_id/bounds
   ['uiTreeResult', { package: 'p', nodes: [{ depth: 1 }], timed_out: false, truncated: false }], // node 字段不全
   ['clickTextResult', { clicked: 'yes', text: 't' }],           // clicked 应为 boolean
   ['screenshotResult', { mime: 'image/png', width: 1, height: 1, encoded_width: 1, encoded_height: 1, base64: 'x' }], // mime 恒为 jpeg

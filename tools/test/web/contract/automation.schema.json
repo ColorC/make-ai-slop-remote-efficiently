@@ -11,6 +11,8 @@
         "screenshot",
         "ui_tree",
         "tap",
+        "swipe",
+        "scroll",
         "click_text",
         "set_text",
         "global_action",
@@ -145,6 +147,31 @@
       "additionalProperties": false
     },
 
+    "swipeArgs": {
+      "description": "归一化坐标滑动手势, 起点 (nx1,ny1) → 终点 (nx2,ny2) ∈ [0,1]; duration_ms 缺省 350, 执行器夹到 100..3000。",
+      "type": "object",
+      "required": ["nx1", "ny1", "nx2", "ny2"],
+      "properties": {
+        "nx1": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ny1": { "type": "number", "minimum": 0, "maximum": 1 },
+        "nx2": { "type": "number", "minimum": 0, "maximum": 1 },
+        "ny2": { "type": "number", "minimum": 0, "maximum": 1 },
+        "duration_ms": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+
+    "scrollArgs": {
+      "description": "对可滚动节点执行无障碍 ACTION_SCROLL_FORWARD/BACKWARD; 给 view_id 时优先找该 id 的可滚动节点, 否则取第一个可见可滚动节点。",
+      "type": "object",
+      "required": ["direction"],
+      "properties": {
+        "direction": { "type": "string", "enum": ["forward", "backward"] },
+        "view_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
     "clickTextArgs": {
       "type": "object",
       "required": ["text"],
@@ -270,6 +297,34 @@
         "dispatched": { "type": "boolean" },
         "x": { "type": "integer" },
         "y": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+
+    "swipeResult": {
+      "type": "object",
+      "required": ["dispatched", "x1", "y1", "x2", "y2", "duration_ms"],
+      "properties": {
+        "dispatched": { "type": "boolean" },
+        "x1": { "type": "integer" },
+        "y1": { "type": "integer" },
+        "x2": { "type": "integer" },
+        "y2": { "type": "integer" },
+        "duration_ms": { "type": "integer", "minimum": 100, "maximum": 3000 }
+      },
+      "additionalProperties": false
+    },
+
+    "scrollResult": {
+      "description": "scrolled=false 表示节点拒绝滚动(常见于已到列表尽头), 不算执行失败。",
+      "type": "object",
+      "required": ["scrolled", "direction", "class", "view_id", "bounds"],
+      "properties": {
+        "scrolled": { "type": "boolean" },
+        "direction": { "type": "string", "enum": ["forward", "backward"] },
+        "class": { "type": "string" },
+        "view_id": { "type": "string" },
+        "bounds": { "type": "string" }
       },
       "additionalProperties": false
     },

@@ -35,6 +35,10 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Executes bounded UI operations after the user enables Android accessibility access. */
 public final class LofaAccessibilityService extends AccessibilityService {
     private static final long UI_TREE_BUDGET_MILLIS = 800;
+    private static final long SCROLL_SEARCH_BUDGET_MILLIS = 1500;
+    private static final long SWIPE_DEFAULT_MILLIS = 350;
+    private static final long SWIPE_MIN_MILLIS = 100;
+    private static final long SWIPE_MAX_MILLIS = 3000;
     private static volatile LofaAccessibilityService instance;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -83,6 +87,16 @@ public final class LofaAccessibilityService extends AccessibilityService {
                 return onMain(() -> uiTree(Math.max(1, Math.min(500, safeArgs.optInt("max_nodes", 250)))));
             case "tap":
                 return tap((float) safeArgs.optDouble("nx", -1), (float) safeArgs.optDouble("ny", -1));
+            case "swipe":
+                return swipe(
+                        (float) safeArgs.optDouble("nx1", -1),
+                        (float) safeArgs.optDouble("ny1", -1),
+                        (float) safeArgs.optDouble("nx2", -1),
+                        (float) safeArgs.optDouble("ny2", -1),
+                        safeArgs.optLong("duration_ms", SWIPE_DEFAULT_MILLIS)
+                );
+            case "scroll":
+                return onMain(() -> scroll(safeArgs.optString("direction"), safeArgs.optString("view_id")));
             case "click_text":
                 return onMain(() -> clickText(safeArgs.optString("text"), safeArgs.optBoolean("exact", true)));
             case "set_text":
@@ -252,6 +266,57 @@ public final class LofaAccessibilityService extends AccessibilityService {
         return out;
     }
 
+    @android.annotation.TargetApi(Build.VERSION_CODES.N)
+    private JSONObject swipe(float nx1, float ny1, float nx2, float ny2, long requestedMillis) throws Exception {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return error("swipe requires Android 7 or newer");
+        if (!isNormalized(nx1) || !isNormalized(ny1) || !isNormalized(nx2) || !isNormalized(ny2)) {
+            return error("swipe requires normalized nx1, ny1, nx2 and ny2 in [0,1]");
+        }
+        long durationMillis = Math.max(SWIPE_MIN_MILLIS, Math.min(SWIPE_MAX_MILLIS, requestedMillis));
+        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
+        float x1 = nx1 * metrics.widthPixels;
+        float y1 = ny1 * metrics.heightPixels;
+        float x2 = nx2 * metrics.widthPixels;
+        float y2 = ny2 * metrics.heightPixels;
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Boolean> success = new AtomicReference<>(false);
+        mainHandler.post(() -> {
+            Path path = new Path();
+            path.moveTo(x1, y1);
+            path.lineTo(x2, y2);
+            GestureDescription gesture = new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMillis))
+                    .build();
+            boolean accepted = dispatchGesture(gesture, new GestureResultCallback() {
+                @Override
+                public void onCompleted(GestureDescription gestureDescription) {
+                    success.set(true);
+                    latch.countDown();
+                }
+
+                @Override
+                public void onCancelled(GestureDescription gestureDescription) {
+                    latch.countDown();
+                }
+            }, null);
+            // A rejected dispatch never calls back; release the waiter instead of timing out.
+            if (!accepted) latch.countDown();
+        });
+        if (!latch.await(durationMillis + 3000, TimeUnit.MILLISECONDS)) return error("swipe timed out");
+        JSONObject out = new JSONObject();
+        out.put("dispatched", success.get());
+        out.put("x1", Math.round(x1));
+        out.put("y1", Math.round(y1));
+        out.put("x2", Math.round(x2));
+        out.put("y2", Math.round(y2));
+        out.put("duration_ms", durationMillis);
+        return out;
+    }
+
+    private static boolean isNormalized(float value) {
+        return value >= 0 && value <= 1;
+    }
+
     private JSONObject clickText(String text, boolean exact) {
         if (text == null || text.trim().isEmpty()) return error("click_text requires text");
         AccessibilityNodeInfo root = activeRoot();
@@ -274,6 +339,63 @@ public final class LofaAccessibilityService extends AccessibilityService {
             }
         }
         return error("text target not found or not clickable: " + text);
+    }
+
+    private JSONObject scroll(String direction, String viewId) {
+        String wanted = direction == null ? "" : direction.trim().toLowerCase(Locale.ROOT);
+        int action;
+        switch (wanted) {
+            case "forward": action = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD; break;
+            case "backward": action = AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD; break;
+            default: return error("scroll requires direction forward or backward");
+        }
+        AccessibilityNodeInfo root = activeRoot();
+        if (root == null) return error("no active accessibility window");
+        AccessibilityNodeInfo target = null;
+        if (viewId != null && !viewId.trim().isEmpty()) {
+            List<AccessibilityNodeInfo> found = root.findAccessibilityNodeInfosByViewId(viewId.trim());
+            for (AccessibilityNodeInfo node : found) {
+                if (node.isScrollable()) {
+                    target = node;
+                    break;
+                }
+            }
+        }
+        if (target == null) target = firstScrollable(root);
+        if (target == null) return error("no scrollable node is available");
+        boolean scrolled = target.performAction(action);
+        Rect bounds = new Rect();
+        target.getBoundsInScreen(bounds);
+        JSONObject out = new JSONObject();
+        try {
+            out.put("scrolled", scrolled);
+            out.put("direction", wanted);
+            out.put("class", target.getClassName() == null ? "" : String.valueOf(target.getClassName()));
+            out.put("view_id", target.getViewIdResourceName() == null ? "" : target.getViewIdResourceName());
+            out.put("bounds", String.format(Locale.ROOT, "%d,%d,%d,%d", bounds.left, bounds.top, bounds.right, bounds.bottom));
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    /** Pre-order search (same order as ui_tree) with a time budget so a huge tree cannot stall the main thread. */
+    private AccessibilityNodeInfo firstScrollable(AccessibilityNodeInfo root) {
+        long deadline = SystemClock.elapsedRealtime() + SCROLL_SEARCH_BUDGET_MILLIS;
+        ArrayDeque<AccessibilityNodeInfo> pending = new ArrayDeque<>();
+        pending.push(root);
+        while (!pending.isEmpty() && SystemClock.elapsedRealtime() < deadline) {
+            AccessibilityNodeInfo node = pending.pop();
+            try {
+                if (node.isScrollable() && node.isVisibleToUser()) return node;
+                for (int index = node.getChildCount() - 1; index >= 0; index--) {
+                    AccessibilityNodeInfo child = node.getChild(index);
+                    if (child != null) pending.push(child);
+                }
+            } catch (Exception ignored) {
+                // One stale node must not prevent the rest of the search.
+            }
+        }
+        return null;
     }
 
     private JSONObject setText(String text, String viewId) {
