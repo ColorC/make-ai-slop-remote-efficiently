@@ -12,8 +12,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "DeviceAutomation")
 public final class DeviceAutomation extends Plugin {
-    private static final String WEB_SESSION_COOKIE = "omni_lofa_session";
-    private static final int WEB_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+    // Package-visible: ExternalWebview refreshes the same cookie on gateway alias hosts.
+    static final String WEB_SESSION_COOKIE = "omni_lofa_session";
+    static final int WEB_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
     @PluginMethod
     public void configure(PluginCall call) {

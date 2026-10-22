@@ -18,6 +18,8 @@ let dashboardLoaded = false
 let initialized = false
 let dashboardUrl = ''
 let localTools = null
+let wallEscapeBar = null
+let wallEscapeActive = false
 const pendingTabs = []
 const pendingNativeTabs = []
 let lastDashboardBootstrap = null
@@ -252,6 +254,8 @@ async function onDashboardBridgeMessage(event) {
   if (data.type === LOFA_BOOTSTRAP_REQUEST) {
     const bootstrap = data.bootstrap
     if (!bootstrap || typeof bootstrap.frontend_build !== 'string' || !Number.isFinite(Number(bootstrap.api_schema_version))) return
+    lastFrameHandshakeAt = Date.now()
+    setWallEscape(false)
     lastDashboardBootstrap = {
       frontend_build: bootstrap.frontend_build,
       api_schema_version: Number(bootstrap.api_schema_version),
@@ -284,6 +288,9 @@ async function onDashboardBridgeMessage(event) {
  * Dashboard 自带「重载 / LOFA 设置」两项时, 壳撤掉右上角那层浮标。
  * 它是绝对定位盖在 Dashboard 之上的, 手机上正好压住页签条与工具行。
  * 没握上手(未连接 / 旧版驾驶舱 / 401 登录页)时它必须留着 —— 那是唯一的自救入口。
+ * 注意 lastDashboardBootstrap 属于**上一个文档**: 帧一旦自行导航离开(点开受保护
+ * 链接、被重定向进 401 墙), 新文档不会再发握手, 浮标必须按 load 实况拉回 ——
+ * 见 inspectDashboardFrameLoad。
  */
 function dashboardHostsShellControls() {
   return Boolean(lastDashboardBootstrap &&
@@ -295,12 +302,69 @@ export function syncLocalTools() {
   localTools.hidden = dashboardHostsShellControls()
 }
 
+// Caddy 对受保护面的 401 响应体(Caddyfile handle_errors 401): 标题「需要登录 · Omnicompany」,
+// 正文「这是受保护面，需要登录」。墙上表单的 POST 在 LAN 旁路上设计性 401, 用户在墙内
+// 做什么都是死路 —— 壳必须给逃生口, 而不是指望墙自愈。
+const WALL_TITLE_MARK = '需要登录'
+const WALL_BODY_MARK = '这是受保护面'
+// 打包后壳在 http://localhost, Dashboard 帧跨源不可读 —— 唯一的存活证据是网桥握手。
+// 握手通常在 load 前后 ~1s 内到(先发 /api/dev/versions 再 postMessage), 放宽到
+// 前后各一段窗口; 超时仍无握手的文档一律视为登录墙/被带离, 亮出逃生条。
+const HANDSHAKE_LOOKBACK_MS = 1500
+const HANDSHAKE_GRACE_MS = 2500
+let lastFrameHandshakeAt = 0
+let frameLoadTimer = 0
+
+function isGatewayLoginWall(doc) {
+  if (!doc) return false
+  try {
+    if ((doc.title || '').indexOf(WALL_TITLE_MARK) >= 0) return true
+    const text = doc.body ? (doc.body.textContent || '') : ''
+    return text.indexOf(WALL_BODY_MARK) >= 0
+  } catch (e) { return false }
+}
+
+function setWallEscape(active) {
+  wallEscapeActive = Boolean(active)
+  if (wallEscapeBar) wallEscapeBar.hidden = !wallEscapeActive
+  if (wallEscapeActive) {
+    // 帧里的文档已经不是那个声明过「我托管壳控件」的 Dashboard 了;
+    // 不清掉这条过期握手, 浮标会被永远压着, 用户连刷新入口都没有。
+    lastDashboardBootstrap = null
+  }
+  syncLocalTools()
+}
+
+/** 每次帧载入都核对: 落在登录墙 / 被带离 Dashboard 时亮出逃生口, 健康 Dashboard 则收起。 */
+function inspectDashboardFrameLoad() {
+  if (!dashboardFrame || !dashboardUrl) { setWallEscape(false); return }
+  const loadedAt = Date.now()
+  let doc = null
+  try { doc = dashboardFrame.contentDocument } catch (e) { doc = null }
+  if (doc) {
+    // 同源(开发态)可直接读 DOM, 当场裁决。
+    let href = ''
+    try { href = String(dashboardFrame.contentWindow.location.href || '') } catch (e) { href = '' }
+    if (isGatewayLoginWall(doc) || (href && href !== 'about:blank' && href !== dashboardUrl)) setWallEscape(true)
+    else setWallEscape(false)
+    return
+  }
+  // 跨源: 握手落在 load 前的回溯窗口内, 说明这个文档已经是活驾驶舱。
+  if (loadedAt - lastFrameHandshakeAt < HANDSHAKE_LOOKBACK_MS) { setWallEscape(false); return }
+  window.clearTimeout(frameLoadTimer)
+  frameLoadTimer = window.setTimeout(() => {
+    if (lastFrameHandshakeAt > loadedAt) { setWallEscape(false); return }
+    setWallEscape(true)
+  }, HANDSHAKE_GRACE_MS)
+}
+
 export function getDashboardBootstrap() {
   return lastDashboardBootstrap
 }
 
 function postTab(request) {
-  if (!dashboardFrame || !dashboardLoaded || !dashboardFrame.contentWindow) {
+  // 逃生态(登录墙/被带离)下帧里没有 Dashboard 监听器, post 出去只会静默丢失。
+  if (wallEscapeActive || !dashboardFrame || !dashboardLoaded || !dashboardFrame.contentWindow) {
     pendingTabs.push(request)
     return false
   }
@@ -314,7 +378,7 @@ function postTab(request) {
 }
 
 function flushPendingTabs() {
-  if (!dashboardLoaded || !dashboardFrame || !dashboardFrame.contentWindow) return
+  if (!dashboardLoaded || wallEscapeActive || !dashboardFrame || !dashboardFrame.contentWindow) return
   while (pendingTabs.length) {
     const request = pendingTabs.shift()
     try { dashboardFrame.contentWindow.postMessage(request, dashboardOrigin()) } catch (e) { pendingTabs.unshift(request); break }
@@ -382,9 +446,16 @@ export function init() {
         '<button type="button" class="browser-local-btn" data-browser-action="reload" aria-label="刷新 Dashboard" title="刷新 Dashboard">&#8635;</button>' +
         '<button type="button" class="browser-local-btn browser-local-home" data-browser-action="settings" aria-label="打开 LOFA 本地设置" title="LOFA 本地设置">LOFA</button>' +
       '</div>' +
+      '<div class="browser-wall-escape" data-omni-capture-ignore="true" hidden>' +
+        '<span class="browser-wall-escape-msg">此页未接入驾驶舱（网关登录墙或旧版页面），页内表单在客户端不可用</span>' +
+        '<button type="button" class="browser-wall-escape-btn browser-wall-escape-home" data-wall-action="home" title="重新载入 Dashboard，离开当前页面">返回工作台</button>' +
+        '<button type="button" class="browser-wall-escape-btn" data-wall-action="settings">设置</button>' +
+        '<button type="button" class="browser-wall-escape-btn browser-wall-escape-dismiss" data-wall-action="dismiss" aria-label="隐藏此提示" title="隐藏此提示（右上角浮标仍可刷新 / 进设置）">&#10005;</button>' +
+      '</div>' +
     '</div>'
   dashboardFrame = view.querySelector('.browser-frame')
   localTools = view.querySelector('.browser-local-tools')
+  wallEscapeBar = view.querySelector('.browser-wall-escape')
   dashboardFrame.addEventListener('load', () => {
     // A Dashboard hot reload cannot reliably post unmount cleanup while its
     // document is being replaced. Remove old native layers before the new
@@ -392,6 +463,7 @@ export function init() {
     const externalWebview = plugins().ExternalWebview
     if (externalWebview && typeof externalWebview.closeAll === 'function') void externalWebview.closeAll()
     dashboardLoaded = true
+    inspectDashboardFrameLoad()
     attachSameOriginPopupFallback(dashboardFrame)
     flushPendingTabs()
   })
@@ -399,6 +471,14 @@ export function init() {
     if (!reloadDashboard()) toast('\u672a\u8fde\u63a5')
   })
   view.querySelector('[data-browser-action="settings"]').addEventListener('click', () => router.tab('me'))
+  view.querySelector('[data-wall-action="home"]').addEventListener('click', () => {
+    if (!reloadDashboard()) toast('\u672a\u8fde\u63a5')
+  })
+  view.querySelector('[data-wall-action="settings"]').addEventListener('click', () => router.tab('me'))
+  // 只藏本条提示; 逃生态与浮标不受影响(下次 load 仍会按实况重新判定)。
+  view.querySelector('[data-wall-action="dismiss"]').addEventListener('click', () => {
+    if (wallEscapeBar) wallEscapeBar.hidden = true
+  })
 
   window.addEventListener('lofa:new-window', (event) => {
     const detail = (event && event.detail) || {}

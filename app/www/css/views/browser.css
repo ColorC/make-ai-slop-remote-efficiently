@@ -48,6 +48,42 @@
 }
 .browser-local-home { font-size: 10px; letter-spacing: .06em; }
 
+/* 401 登录墙 / 帧被带离 Dashboard 时的逃生条: 墙内表单在客户端是死路(LAN 旁路上
+   设计性 401), 必须始终给出「返回工作台 / 设置」两个出口。 */
+.browser-wall-escape {
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(var(--lofa-safe-bottom, 0px) + 18px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 560px);
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 190, 105, .45);
+  border-radius: 12px;
+  background: rgba(26, 20, 10, .92);
+  color: #ffe9c4;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .35);
+  font: 13px/1.5 system-ui, sans-serif;
+}
+.browser-wall-escape[hidden] { display: none; }
+.browser-wall-escape-msg { flex: 1 1 auto; min-width: 0; }
+.browser-wall-escape-btn {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 224, 170, .5);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: 600 13px/1 system-ui, sans-serif;
+  touch-action: manipulation;
+}
+.browser-wall-escape-home { background: rgba(255, 190, 105, .18); }
+.browser-wall-escape-dismiss { padding: 0 10px; opacity: .8; }
+
 @media (prefers-reduced-motion: reduce) {
   .browser-local-tools { transition: none; }
 }

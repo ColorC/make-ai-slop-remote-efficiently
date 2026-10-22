@@ -21,8 +21,12 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
@@ -32,10 +36,24 @@ import java.util.regex.Pattern;
  * The child WebViews are real top-level Android views, so a site's
  * X-Frame-Options/CSP frame-ancestors policy does not apply. Dashboard still owns
  * tab chrome and sends only a stable id, URL, bounds and visibility.
+ *
+ * Session handoff for workspace-gateway links: a Dashboard-minted webview
+ * bearer becomes the gateway's omni_desktop_session cookie (mirroring the
+ * desktop host's gateway_session.rs), and a paired LOFA device refreshes its
+ * omni_lofa_session on the gateway aliases. Without this the child WebView has
+ * no session of its own and every protected link lands on the gateway's 401
+ * login wall — a dead end inside the client (its form can never succeed on
+ * the LAN bypass by design).
  */
 @CapacitorPlugin(name = "ExternalWebview")
 public final class ExternalWebview extends Plugin {
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9_-]{1,80}");
+    private static final Pattern WEBVIEW_SESSION_TOKEN = Pattern.compile("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+");
+    /** Same list as the Dashboard's WORKSPACE_GATEWAY_HOSTS (desktopSession.ts). */
+    private static final Set<String> WORKSPACE_GATEWAY_HOSTS = new HashSet<>(Arrays.asList(
+            "127.0.0.1", "localhost", "::1", "10.0.2.2", "10.3.43.246", "l-20260227cxlfj",
+            "lan.colorc.cc", "workshop.colorc.cc"));
+    private static final long WEBVIEW_SESSION_RENEWAL_MARGIN_SECONDS = 60;
     private final Map<String, Entry> entries = new LinkedHashMap<>();
     private boolean hostVisible = true;
 
@@ -79,9 +97,15 @@ public final class ExternalWebview extends Plugin {
             return;
         }
         boolean visible = call.getBoolean("visible", true);
+        String webviewToken = validWebviewSessionToken(
+                call.getObject("webviewSession"),
+                System.currentTimeMillis() / 1000L);
 
         getActivity().runOnUiThread(() -> {
             try {
+                // Cookies must be in the shared jar before the first request,
+                // otherwise the gateway answers 401 on the very first load.
+                installGatewaySession(uri, webviewToken);
                 Entry entry = entries.get(id);
                 if (entry == null) {
                     WebView webView = createWebView();
@@ -194,6 +218,64 @@ public final class ExternalWebview extends Plugin {
         } catch (Exception exception) {
             return null;
         }
+    }
+
+    static boolean isWorkspaceGatewayHost(String host) {
+        return host != null && WORKSPACE_GATEWAY_HOSTS.contains(host.trim().toLowerCase(Locale.US));
+    }
+
+    /** Cookie name per scheme, mirroring the gateway contract (https / http bypass). */
+    static String gatewaySessionCookieName(String scheme) {
+        if ("https".equalsIgnoreCase(scheme)) return "omni_desktop_session";
+        if ("http".equalsIgnoreCase(scheme)) return "omni_desktop_session_http";
+        return null;
+    }
+
+    static String validWebviewSessionToken(String token, double expiresAtSeconds, long nowSeconds) {
+        String value = token == null ? "" : token.trim();
+        if (!WEBVIEW_SESSION_TOKEN.matcher(value).matches()) return null;
+        if (!(expiresAtSeconds > nowSeconds + WEBVIEW_SESSION_RENEWAL_MARGIN_SECONDS)) return null;
+        return value;
+    }
+
+    private static String validWebviewSessionToken(JSObject session, long nowSeconds) {
+        if (session == null) return null;
+        Object expires = session.opt("expiresAt");
+        return validWebviewSessionToken(
+                session.optString("token", ""),
+                expires instanceof Number ? ((Number) expires).doubleValue() : 0,
+                nowSeconds);
+    }
+
+    /**
+     * Install the session cookies a gateway-hosted link needs, before any request
+     * is issued. The cookie jar is shared with the main WebView, so this also
+     * covers the alias hosts (paired by IP, link opened via lan.colorc.cc).
+     * Never applied to arbitrary external hosts.
+     */
+    private void installGatewaySession(Uri uri, String webviewToken) {
+        String host = uri.getHost();
+        String scheme = uri.getScheme();
+        if (host == null || scheme == null || !isWorkspaceGatewayHost(host)) return;
+        boolean secure = "https".equalsIgnoreCase(scheme);
+        CookieManager manager = CookieManager.getInstance();
+        manager.setAcceptCookie(true);
+        String origin = scheme.toLowerCase(Locale.US) + "://" + host;
+        if (webviewToken != null) {
+            String name = gatewaySessionCookieName(scheme);
+            if (name != null) {
+                manager.setCookie(origin, name + "=" + webviewToken
+                        + "; Path=/" + (secure ? "; Secure" : "") + "; HttpOnly; SameSite=Lax");
+            }
+        }
+        if (secure && DeviceBridgeConfig.isConfigured(getContext())) {
+            String value = DeviceBridgeConfig.webSessionCookieValue(
+                    getContext(), DeviceBridgeConfig.deviceId(getContext()));
+            manager.setCookie(origin, DeviceAutomation.WEB_SESSION_COOKIE + "=" + value
+                    + "; Path=/; Max-Age=" + DeviceAutomation.WEB_SESSION_MAX_AGE_SECONDS
+                    + "; Secure; HttpOnly; SameSite=None");
+        }
+        manager.flush();
     }
 
     private Bounds validBounds(PluginCall call) {
