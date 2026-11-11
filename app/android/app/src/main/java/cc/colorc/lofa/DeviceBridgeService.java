@@ -59,9 +59,26 @@ public final class DeviceBridgeService extends Service {
             Pattern.CASE_INSENSITIVE
     );
 
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final ExecutorService worker = Executors.newCachedThreadPool();
     private final Map<String, JSONObject> completedReceipts = new LinkedHashMap<>();
     private volatile boolean stopping;
+    /** One device executes one command at a time, whichever control plane sent it. */
+    private static final Object EXEC_LOCK = new Object();
+    /** Extra control planes (e.g. the home hosting PC) polled in parallel with the primary one. */
+    private static final Map<String, ExtraState> extraStates = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final class ExtraState {
+        final String base;
+        volatile boolean paired;
+        volatile long lastSuccessAt;
+        volatile String lastError = "";
+        volatile int failures;
+        final Map<String, JSONObject> receipts = new LinkedHashMap<>();
+
+        ExtraState(String base) {
+            this.base = base;
+        }
+    }
 
     static void startIfConfigured(Context context) {
         if (!DeviceBridgeConfig.isConfigured(context)) return;
@@ -88,6 +105,16 @@ public final class DeviceBridgeService extends Service {
             out.put("notification_permission", notificationPermission(context));
             out.put("accessibility_connected", LofaAccessibilityService.isRunning());
             out.put("capabilities", capabilities());
+            JSONArray extras = new JSONArray();
+            for (ExtraState state : extraStates.values()) {
+                extras.put(new JSONObject()
+                        .put("base", state.base)
+                        .put("paired", state.paired)
+                        .put("last_success_at", state.lastSuccessAt)
+                        .put("last_error", state.lastError)
+                        .put("consecutive_failures", state.failures));
+            }
+            out.put("extra_bridges", extras);
         } catch (Exception ignored) {
         }
         WirelessAdbKeeper.putStatus(context, out);
@@ -121,7 +148,8 @@ public final class DeviceBridgeService extends Service {
                 // and screenshot max_dim/quality/format + gesture abort_if_touched_after args.
                 .put("screen_state")
                 .put("human_touch")
-                .put("launch_trampoline");
+                .put("launch_trampoline")
+                .put("multi_endpoint");
     }
 
     private static String appVersionName(Context context) {
@@ -171,6 +199,7 @@ public final class DeviceBridgeService extends Service {
         stopping = false;
         WirelessAdbKeeper.onComponentStart(this, "bridge_start");
         worker.execute(this::runLoop);
+        worker.execute(this::superviseExtras);
     }
 
     @Override
@@ -217,7 +246,7 @@ public final class DeviceBridgeService extends Service {
                 if (commands != null) {
                     for (int index = 0; index < commands.length() && !stopping; index++) {
                         JSONObject command = commands.optJSONObject(index);
-                        if (command != null) executeAndReport(base, deviceId, token, command);
+                        if (command != null) executeAndReport(base, deviceId, token, command, completedReceipts);
                     }
                 }
                 paired = true;
@@ -259,7 +288,73 @@ public final class DeviceBridgeService extends Service {
         request("POST", base + "/api/android/automation/register", registration, token, 8000);
     }
 
-    private void executeAndReport(String base, String deviceId, String token, JSONObject command) throws Exception {
+    /** Starts a poll loop for every configured extra control plane; loops end when unconfigured. */
+    private void superviseExtras() {
+        while (!stopping) {
+            for (String base : DeviceBridgeConfig.extraBases(this)) {
+                if (extraStates.containsKey(base)) continue;
+                ExtraState state = new ExtraState(base);
+                extraStates.put(base, state);
+                worker.execute(() -> runExtraLoop(state));
+            }
+            sleep(10000);
+        }
+    }
+
+    private void runExtraLoop(ExtraState state) {
+        long backoffMillis = 2000;
+        try {
+            while (!stopping && DeviceBridgeConfig.extraBases(this).contains(state.base)) {
+                String deviceId = DeviceBridgeConfig.deviceId(this);
+                String token = DeviceBridgeConfig.endpointToken(this, state.base);
+                if (deviceId.isEmpty()) {
+                    state.lastError = "device id is not configured";
+                    sleep(10000);
+                    continue;
+                }
+                try {
+                    if (!state.paired) pairAndRegister(state.base, deviceId, token);
+                    state.paired = true;
+                    String encoded = URLEncoder.encode(deviceId, StandardCharsets.UTF_8.name());
+                    JSONObject payload = request(
+                            "GET",
+                            state.base + "/api/android/automation/poll?device_id=" + encoded + "&wait_seconds=25",
+                            null,
+                            token,
+                            35000
+                    );
+                    JSONArray commands = payload.optJSONArray("commands");
+                    if (commands != null) {
+                        for (int index = 0; index < commands.length() && !stopping; index++) {
+                            JSONObject command = commands.optJSONObject(index);
+                            if (command != null) executeAndReport(state.base, deviceId, token, command, state.receipts);
+                        }
+                    }
+                    state.lastSuccessAt = System.currentTimeMillis();
+                    state.lastError = "";
+                    state.failures = 0;
+                    backoffMillis = 2000;
+                } catch (Exception error) {
+                    state.paired = false;
+                    state.failures += 1;
+                    state.lastError = error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
+                    // Away from that network the endpoint is simply unreachable; poll it lazily.
+                    sleep(backoffMillis);
+                    backoffMillis = Math.min(60000, backoffMillis * 2);
+                }
+            }
+        } finally {
+            extraStates.remove(state.base);
+        }
+    }
+
+    private void executeAndReport(
+            String base,
+            String deviceId,
+            String token,
+            JSONObject command,
+            Map<String, JSONObject> completedReceipts
+    ) throws Exception {
         String commandId = command.optString("id");
         if (commandId.isEmpty()) return;
         JSONObject cached = completedReceipts.get(commandId);
@@ -270,6 +365,7 @@ public final class DeviceBridgeService extends Service {
         long expiresAtMillis = (long) (command.optDouble("expires_at", 0) * 1000L);
         JSONObject result;
         boolean ok;
+        synchronized (EXEC_LOCK) {
         if (expiresAtMillis > 0 && System.currentTimeMillis() > expiresAtMillis) {
             result = error("command expired before device execution");
             ok = false;
@@ -295,6 +391,7 @@ public final class DeviceBridgeService extends Service {
                 result = executor.executeAutomationCommand(command.optString("op"), command.optJSONObject("args"));
                 ok = !result.has("error");
             }
+        }
         }
         JSONObject receipt = new JSONObject();
         receipt.put("device_id", deviceId);

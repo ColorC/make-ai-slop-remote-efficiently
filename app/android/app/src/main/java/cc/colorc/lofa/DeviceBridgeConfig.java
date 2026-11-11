@@ -47,6 +47,61 @@ final class DeviceBridgeConfig {
         return token;
     }
 
+    private static final String PREF_EXTRA_BASES = "extra_bases";
+    private static final String PREF_ENDPOINT_TOKEN = "endpoint_token:";
+
+    /** Extra control planes polled alongside the primary one (e.g. the home hosting PC). */
+    static java.util.List<String> extraBases(Context context) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        try {
+            org.json.JSONArray array = new org.json.JSONArray(preferences(context).getString(PREF_EXTRA_BASES, "[]"));
+            for (int index = 0; index < array.length(); index++) {
+                String base = trimBase(array.optString(index, ""));
+                if (!base.isEmpty() && !out.contains(base)) out.add(base);
+            }
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    static void setExtraBases(Context context, java.util.List<String> bases) {
+        org.json.JSONArray array = new org.json.JSONArray();
+        for (String base : bases) array.put(trimBase(base));
+        preferences(context).edit().putString(PREF_EXTRA_BASES, array.toString()).commit();
+    }
+
+    /** https anywhere; plain http only to a private or loopback IPv4 literal (home LAN relay, adb reverse). */
+    static boolean isAcceptableExtraBase(String value) {
+        try {
+            java.net.URI uri = java.net.URI.create(trimBase(value));
+            String host = uri.getHost();
+            if (host == null || uri.getRawUserInfo() != null || uri.getRawQuery() != null) return false;
+            if ("https".equalsIgnoreCase(uri.getScheme())) return true;
+            if (!"http".equalsIgnoreCase(uri.getScheme())) return false;
+            if (!host.matches("\\d{1,3}(\\.\\d{1,3}){3}")) return false;
+            java.net.InetAddress address = java.net.InetAddress.getByName(host);
+            return address.isSiteLocalAddress() || address.isLoopbackAddress();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    /**
+     * A separate random token per extra control plane, so a plain-http home relay never
+     * sees the token the primary dashboard accepts.
+     */
+    static String endpointToken(Context context, String base) {
+        String key = PREF_ENDPOINT_TOKEN + trimBase(base);
+        SharedPreferences preferences = preferences(context);
+        String existing = preferences.getString(key, "");
+        if (existing != null && !existing.isEmpty()) return existing;
+        byte[] bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        String token = Base64.encodeToString(bytes, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
+        preferences.edit().putString(key, token).commit();
+        return token;
+    }
+
     static String webSessionCookieValue(Context context, String deviceId) {
         return webSessionCookieValue(deviceId, deviceToken(context));
     }

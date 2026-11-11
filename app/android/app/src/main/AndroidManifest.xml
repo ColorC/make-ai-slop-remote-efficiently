@@ -37,6 +37,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Extra control planes for the device bridge (home relay); adb shell only. -->
+        <receiver android:name=".BridgeEndpointsShellReceiver" android:exported="true"
+            android:permission="android.permission.DUMP">
+            <intent-filter>
+                <action android:name="cc.colorc.lofa.SET_BRIDGE_ENDPOINTS" />
+            </intent-filter>
+        </receiver>
         <!-- launch_app hop: a foreground lofa activity starts the target (iAware blocks background starts). -->
         <activity android:name=".LaunchTrampolineActivity" android:exported="false"
             android:excludeFromRecents="true" android:noHistory="true"
