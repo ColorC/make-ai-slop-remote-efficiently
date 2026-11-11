@@ -34,6 +34,8 @@ final class HumanTouchWatcher {
     private static volatile long injectingUntilUptime;
     private static volatile String state = "detached";
     private static volatile int lastDeviceId;
+    /** Wall clock (ms) since which the overlay has been attached without a gap; 0 when not watching. */
+    private static volatile long watchingSince;
 
     private View view;
 
@@ -63,6 +65,7 @@ final class HumanTouchWatcher {
             manager.addView(probe, params);
             view = probe;
             state = "attached";
+            watchingSince = System.currentTimeMillis();
         } catch (Throwable error) {
             state = "unavailable: " + error.getClass().getSimpleName();
             Log.w(TAG, "touch watcher overlay failed", error);
@@ -77,6 +80,7 @@ final class HumanTouchWatcher {
         }
         view = null;
         state = "detached";
+        watchingSince = 0;
     }
 
     /** Call right before dispatching a gesture that lasts {@code durationMillis}. */
@@ -116,6 +120,10 @@ final class HumanTouchWatcher {
         try {
             long now = System.currentTimeMillis();
             out.put("touch_watch", state);
+            // Touches are only seen while attached: "no human touch in the last N minutes" is a claim
+            // the controller may make only when human_touch_since is at least N minutes ago.
+            out.put("human_touch_since", watchingSince);
+            out.put("human_touch_since_s", watchingSince > 0 ? (now - watchingSince) / 1000.0 : JSONObject.NULL);
             out.put("last_touch_at", lastHumanTouchAt);
             out.put("last_touch_s", lastHumanTouchAt > 0 ? (now - lastHumanTouchAt) / 1000.0 : JSONObject.NULL);
             out.put("human_touches", humanTouches);
