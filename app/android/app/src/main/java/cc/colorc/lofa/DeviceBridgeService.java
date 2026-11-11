@@ -102,6 +102,10 @@ public final class DeviceBridgeService extends Service {
             out.put("app_version_code", appVersionCode(context));
             out.put("device_runtime", DEVICE_RUNTIME);
             out.put("device_local_ip", localIpv4Address());
+            // Which physical device this is (operators asked "what phone model is that?").
+            out.put("device_manufacturer", Build.MANUFACTURER);
+            out.put("device_model", Build.MODEL);
+            out.put("device_name", Build.DEVICE);
             out.put("notification_permission", notificationPermission(context));
             out.put("accessibility_connected", LofaAccessibilityService.isRunning());
             out.put("capabilities", capabilities());
