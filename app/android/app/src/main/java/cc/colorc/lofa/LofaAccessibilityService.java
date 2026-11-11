@@ -60,6 +60,8 @@ public final class LofaAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         DeviceBridgeService.startIfConfigured(this);
+        AttendanceScheduler.refresh(this);
+        WirelessAdbKeeper.onComponentStart(this, "accessibility_start");
     }
 
     @Override
@@ -70,7 +72,7 @@ public final class LofaAccessibilityService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // UI state is read only when an allowlisted command requests it.
+        AttendanceRunner.interaction(event.getEventType());
     }
 
     @Override
@@ -79,6 +81,9 @@ public final class LofaAccessibilityService extends AccessibilityService {
     }
 
     public JSONObject executeAutomationCommand(String op, JSONObject args) throws Exception {
+        if (AttendanceSettingsActivity.isEnteringPin() || AttendanceRunner.isEnteringCredential()) {
+            return error("Private phone input in progress");
+        }
         JSONObject safeArgs = args == null ? new JSONObject() : args;
         switch (op) {
             case "status":

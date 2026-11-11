@@ -70,6 +70,7 @@ function render() {
 
   scroll.innerHTML =
     group('连接', connectionRows) +
+    group('手机自动化', navRow('attendance', '飞书定时启动', '本机运行 · 免费')) +
     group('外观', appearanceRows) +
     group('网页业务前端', dashboardRows) +
     group('关于', aboutRows)
@@ -86,6 +87,11 @@ function wire() {
       else if (key === 'glass') { setReduceGlass(!getReduceGlass()); render() }
       else if (key === 'motion') { setReduceMotion(!getReduceMotion()); render() }
       else if (key === 'dashboard') browserView.openHome()
+      else if (key === 'attendance') {
+        const plugin = window.Capacitor?.Plugins?.DeviceAutomation
+        if (plugin?.openAttendanceSettings) plugin.openAttendanceSettings().catch(() => toast('无法打开手机设置'))
+        else toast('请在新版 LOFA 安卓应用中打开')
+      }
       else if (key === 'update') {
         if (store.update) { event.stopPropagation(); doUpdate() }
         else { toast('检查中…'); checkUpdate().then(render) }

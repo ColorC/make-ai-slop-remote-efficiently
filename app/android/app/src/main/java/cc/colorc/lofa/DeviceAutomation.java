@@ -128,6 +128,13 @@ public final class DeviceAutomation extends Plugin {
     }
 
     @PluginMethod
+    public void openAttendanceSettings(PluginCall call) {
+        getContext().startActivity(new Intent(getContext(), AttendanceSettingsActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        call.resolve();
+    }
+
+    @PluginMethod
     public void openAccessibilitySettings(PluginCall call) {
         try {
             Intent intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);

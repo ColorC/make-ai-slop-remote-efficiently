@@ -4,15 +4,17 @@
 
 A LAN-based Android mobile client for the [omnicompany](https://github.com/ColorC/make-ai-slop-more-efficiently) AI software factory. Browse reviews, chat with AI agents, use a real terminal, manage projects — all from your phone on the same network.
 
-局域网安卓客户端,把 omnicompany(AI 软件工厂)装进口袋:手机与电脑在同一局域网内,即可审阅材料、和 AI 对话、开真终端、管项目。离机无功能,不做离线缓存。
+局域网安卓客户端,把 omnicompany(AI 软件工厂)装进口袋:手机与电脑在同一局域网内,即可审阅材料、和 AI 对话、开真终端、管项目。业务页面依赖电脑；本机定时启动独立运行，不做业务离线缓存。
 
 ## ⚠️ Read This First · 先看这个
 
-> This is a personal tool built for my own workflow. It requires omnicompany's dashboard backend running on a PC on the same LAN. It will NOT work standalone. I make no guarantees it will work on your machine, but I welcome bug fixes, feature PRs, or just filing issues telling me to fix something.
+> This is a personal tool built for my own workflow. Dashboard features require omnicompany's backend running on a PC on the same LAN. Native phone scheduling runs independently. I make no guarantees it will work on your machine, but I welcome bug fixes, feature PRs, or just filing issues telling me to fix something.
 >
-> 这是为我自己的工作流造的私人工具。必须配合局域网内一台运行 omnicompany 看板后端的电脑,单独装 app 没有任何功能。不保证在你的机器上能跑——但欢迎修 bug、提 feature PR,或者直接开 issue 命令我修(是的,你可以命令我)。
+> 这是为我自己的工作流造的私人工具。看板功能需要局域网内的 omnicompany 后端；手机本地定时启动不依赖电脑。不保证在你的机器上能跑——但欢迎修 bug、提 feature PR,或者直接开 issue 命令我修(是的,你可以命令我)。
 
 ## Features · 功能
+
+- **本机飞书定时启动** — 无订阅依赖，入口为 LOFA 设置或长按桌面图标的「飞书定时启动」。默认周一至周五 09:55、09:59、19:01、19:05，可改星期和时间；精确闹钟可在休眠中触发，重启首次手动解锁、升级、时间和时区变化后恢复排程。锁屏 PIN 仅由原生界面录入，以 Android Keystore AES-GCM 加密存入不备份目录，不提供网页或远程读取接口。使用已授权的无障碍服务尝试一次解锁、打开官方飞书，再约 20 秒回锁；已解锁时只打开飞书。失败会通知并保留记录，输入失败后暂停 PIN 尝试。节假日、调休需自行调整；重启后需先手动解锁一次；小米须允许自启动、后台弹出和锁屏显示，并设省电无限制。仅打开飞书触发其极速打卡检查，是否成功以飞书记录为准。
 
 - **4-tab mobile UI** — Sessions (chat + terminal) / Review / Projects / Me(会话 · 审阅 · 项目 · 我的)
 - **AI chat, multiple providers** — Claude / Codex / Kimi / OpenCode / Omni; streaming responses, tool-call cards, thinking blocks(多提供方对话,流式渲染 + 工具卡 + 推理块)

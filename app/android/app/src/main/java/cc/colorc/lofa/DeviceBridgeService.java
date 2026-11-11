@@ -90,6 +90,7 @@ public final class DeviceBridgeService extends Service {
             out.put("capabilities", capabilities());
         } catch (Exception ignored) {
         }
+        WirelessAdbKeeper.putStatus(context, out);
         return out;
     }
 
@@ -162,6 +163,7 @@ public final class DeviceBridgeService extends Service {
         startForeground(NOTIFICATION_ID, notification("Connecting to the local control plane"));
         running = true;
         stopping = false;
+        WirelessAdbKeeper.onComponentStart(this, "bridge_start");
         worker.execute(this::runLoop);
     }
 

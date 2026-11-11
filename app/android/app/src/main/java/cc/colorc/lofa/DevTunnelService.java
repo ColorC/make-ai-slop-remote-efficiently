@@ -164,6 +164,7 @@ public final class DevTunnelService extends Service {
         super.onCreate();
         createNotificationChannel();
         startForeground(NOTIFICATION_ID, notification("Starting reverse adb tunnel"));
+        WirelessAdbKeeper.onComponentStart(this, "tunnel_start");
         client = new OkHttpClient.Builder()
                 .pingInterval(20, TimeUnit.SECONDS)      // 心跳保活/探测半开连接
                 .readTimeout(0, TimeUnit.MILLISECONDS)   // WS 长连不设读超时

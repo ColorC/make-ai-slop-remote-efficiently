@@ -38,6 +38,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         DeviceBridgeService.startIfConfigured(this);
         DevTunnelService.startIfConfigured(this);   // Reconnect the reverse debug tunnel when configured.
+        WirelessAdbKeeper.onComponentStart(this, "app_start");
 
         WebView webView = getBridge().getWebView();
         CookieManager cookieManager = CookieManager.getInstance();
@@ -62,6 +63,7 @@ public class MainActivity extends BridgeActivity {
         decor.postDelayed(() -> ViewCompat.requestApplyInsets(decor), 2500);
         handleDevTunnelIntent(getIntent());
         handleFileShareIntent(getIntent());
+        handleAttendanceIntent(getIntent());
     }
 
     @Override
@@ -70,6 +72,16 @@ public class MainActivity extends BridgeActivity {
         setIntent(intent);
         handleDevTunnelIntent(intent);
         handleFileShareIntent(intent);
+        handleAttendanceIntent(intent);
+    }
+
+    private void handleAttendanceIntent(Intent intent) {
+        if (intent != null && ("cc.colorc.lofa.OPEN_ATTENDANCE_SETTINGS".equals(intent.getAction())
+                || intent.getBooleanExtra("open_attendance_settings", false))) {
+            intent.removeExtra("open_attendance_settings");
+            intent.setAction(Intent.ACTION_MAIN);
+            startActivity(new Intent(this, AttendanceSettingsActivity.class));
+        }
     }
 
     @Override

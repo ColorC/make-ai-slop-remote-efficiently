@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="attendance" android:enabled="true"
+        android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/attendance_label">
+        <intent android:action="cc.colorc.lofa.OPEN_ATTENDANCE_SETTINGS"
+            android:targetPackage="cc.colorc.lofa" android:targetClass="cc.colorc.lofa.MainActivity" />
+    </shortcut>
+</shortcuts>
