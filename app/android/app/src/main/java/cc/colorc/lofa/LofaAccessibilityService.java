@@ -39,8 +39,12 @@ public final class LofaAccessibilityService extends AccessibilityService {
     private static final long SWIPE_DEFAULT_MILLIS = 350;
     private static final long SWIPE_MIN_MILLIS = 100;
     private static final long SWIPE_MAX_MILLIS = 3000;
+    private static final long TAP_DEFAULT_MILLIS = 80;
+    private static final int SCREENSHOT_DEFAULT_MAX = 1280;
+    private static final int SCREENSHOT_LIMIT_MAX = 3200;
     private static volatile LofaAccessibilityService instance;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final HumanTouchWatcher touchWatcher = new HumanTouchWatcher();
 
     public static LofaAccessibilityService getInstance() {
         return instance;
@@ -59,6 +63,7 @@ public final class LofaAccessibilityService extends AccessibilityService {
     protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
+        touchWatcher.attach(this);
         DeviceBridgeService.startIfConfigured(this);
         AttendanceScheduler.refresh(this);
         WirelessAdbKeeper.onComponentStart(this, "accessibility_start");
@@ -66,6 +71,7 @@ public final class LofaAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        touchWatcher.detach(this);
         if (instance == this) instance = null;
         super.onDestroy();
     }
@@ -91,8 +97,14 @@ public final class LofaAccessibilityService extends AccessibilityService {
             case "ui_tree":
                 return onMain(() -> uiTree(Math.max(1, Math.min(500, safeArgs.optInt("max_nodes", 250)))));
             case "tap":
-                return tap((float) safeArgs.optDouble("nx", -1), (float) safeArgs.optDouble("ny", -1));
+                if (touchedSince(safeArgs)) return humanTouchError();
+                return tap(
+                        (float) safeArgs.optDouble("nx", -1),
+                        (float) safeArgs.optDouble("ny", -1),
+                        safeArgs.optLong("duration_ms", TAP_DEFAULT_MILLIS)
+                );
             case "swipe":
+                if (touchedSince(safeArgs)) return humanTouchError();
                 return swipe(
                         (float) safeArgs.optDouble("nx1", -1),
                         (float) safeArgs.optDouble("ny1", -1),
@@ -109,11 +121,17 @@ public final class LofaAccessibilityService extends AccessibilityService {
             case "global_action":
                 return onMain(() -> globalAction(safeArgs.optString("action")));
             case "launch_app":
-                return onMain(() -> launchApp(safeArgs.optString("package")));
+                return onMain(() -> safeArgs.optBoolean("trampoline", false)
+                        ? launchViaTrampoline(safeArgs.optString("package"))
+                        : launchApp(safeArgs.optString("package")));
             case "launch_label":
                 return onMain(() -> launchLabel(safeArgs.optString("label")));
             case "screenshot":
-                return screenshot();
+                return screenshot(
+                        Math.max(256, Math.min(SCREENSHOT_LIMIT_MAX, safeArgs.optInt("max_dim", SCREENSHOT_DEFAULT_MAX))),
+                        Math.max(30, Math.min(95, safeArgs.optInt("quality", 75))),
+                        "png".equalsIgnoreCase(safeArgs.optString("format", "jpeg"))
+                );
             default:
                 return error("unsupported automation op: " + op);
         }
@@ -128,6 +146,7 @@ public final class LofaAccessibilityService extends AccessibilityService {
             out.put("package", root == null || root.getPackageName() == null ? "" : String.valueOf(root.getPackageName()));
             out.put("window_title", root == null || root.getText() == null ? "" : clip(root.getText(), 160));
             out.put("android_api", Build.VERSION.SDK_INT);
+            out.put("top_app_package", topAppPackage());
             JSONObject bridge = DeviceBridgeService.statusJson(this);
             java.util.Iterator<String> keys = bridge.keys();
             while (keys.hasNext()) {
@@ -234,23 +253,26 @@ public final class LofaAccessibilityService extends AccessibilityService {
     }
 
     @android.annotation.TargetApi(Build.VERSION_CODES.N)
-    private JSONObject tap(float normalizedX, float normalizedY) throws Exception {
+    private JSONObject tap(float normalizedX, float normalizedY, long requestedMillis) throws Exception {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return error("tap requires Android 7 or newer");
         if (normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) {
             return error("tap requires normalized nx and ny in [0,1]");
         }
-        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
-        float x = normalizedX * metrics.widthPixels;
-        float y = normalizedY * metrics.heightPixels;
+        long durationMillis = Math.max(1, Math.min(SWIPE_MAX_MILLIS, requestedMillis));
+        // Normalized against the full rotated display, the same frame a screenshot shows.
+        int[] display = DeviceState.displaySize(this);
+        float x = Math.min(display[0] - 1, normalizedX * display[0]);
+        float y = Math.min(display[1] - 1, normalizedY * display[1]);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Boolean> success = new AtomicReference<>(false);
         mainHandler.post(() -> {
             Path path = new Path();
             path.moveTo(x, y);
             GestureDescription gesture = new GestureDescription.Builder()
-                    .addStroke(new GestureDescription.StrokeDescription(path, 0, 80))
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMillis))
                     .build();
-            dispatchGesture(gesture, new GestureResultCallback() {
+            HumanTouchWatcher.markInjection(durationMillis);
+            boolean accepted = dispatchGesture(gesture, new GestureResultCallback() {
                 @Override
                 public void onCompleted(GestureDescription gestureDescription) {
                     success.set(true);
@@ -262,12 +284,16 @@ public final class LofaAccessibilityService extends AccessibilityService {
                     latch.countDown();
                 }
             }, null);
+            if (!accepted) latch.countDown();
         });
-        if (!latch.await(3, TimeUnit.SECONDS)) return error("tap timed out");
+        if (!latch.await(durationMillis + 3000, TimeUnit.MILLISECONDS)) return error("tap timed out");
         JSONObject out = new JSONObject();
         out.put("dispatched", success.get());
         out.put("x", Math.round(x));
         out.put("y", Math.round(y));
+        out.put("duration_ms", durationMillis);
+        out.put("display_width", display[0]);
+        out.put("display_height", display[1]);
         return out;
     }
 
@@ -278,11 +304,11 @@ public final class LofaAccessibilityService extends AccessibilityService {
             return error("swipe requires normalized nx1, ny1, nx2 and ny2 in [0,1]");
         }
         long durationMillis = Math.max(SWIPE_MIN_MILLIS, Math.min(SWIPE_MAX_MILLIS, requestedMillis));
-        android.util.DisplayMetrics metrics = getResources().getDisplayMetrics();
-        float x1 = nx1 * metrics.widthPixels;
-        float y1 = ny1 * metrics.heightPixels;
-        float x2 = nx2 * metrics.widthPixels;
-        float y2 = ny2 * metrics.heightPixels;
+        int[] display = DeviceState.displaySize(this);
+        float x1 = Math.min(display[0] - 1, nx1 * display[0]);
+        float y1 = Math.min(display[1] - 1, ny1 * display[1]);
+        float x2 = Math.min(display[0] - 1, nx2 * display[0]);
+        float y2 = Math.min(display[1] - 1, ny2 * display[1]);
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<Boolean> success = new AtomicReference<>(false);
         mainHandler.post(() -> {
@@ -292,6 +318,7 @@ public final class LofaAccessibilityService extends AccessibilityService {
             GestureDescription gesture = new GestureDescription.Builder()
                     .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMillis))
                     .build();
+            HumanTouchWatcher.markInjection(durationMillis);
             boolean accepted = dispatchGesture(gesture, new GestureResultCallback() {
                 @Override
                 public void onCompleted(GestureDescription gestureDescription) {
@@ -316,6 +343,40 @@ public final class LofaAccessibilityService extends AccessibilityService {
         out.put("y2", Math.round(y2));
         out.put("duration_ms", durationMillis);
         return out;
+    }
+
+    /** Gesture args may carry abort_if_touched_after (epoch ms): refuse if a person touched since. */
+    private static boolean touchedSince(JSONObject args) {
+        long since = args.optLong("abort_if_touched_after", 0);
+        return since > 0 && HumanTouchWatcher.lastHumanTouchAt() > since;
+    }
+
+    private static JSONObject humanTouchError() {
+        JSONObject out = error("human_touch: a person touched the screen; automation yields");
+        try {
+            out.put("human_touch", true);
+            out.put("last_touch_at", HumanTouchWatcher.lastHumanTouchAt());
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
+    /** Package of the top-most application window (the game), ignoring overlays and system UI. */
+    private String topAppPackage() {
+        try {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows == null) return "";
+            AccessibilityWindowInfo best = null;
+            for (AccessibilityWindowInfo window : windows) {
+                if (window == null || window.getType() != AccessibilityWindowInfo.TYPE_APPLICATION) continue;
+                if (best == null || window.getLayer() > best.getLayer()) best = window;
+            }
+            if (best == null) return "";
+            AccessibilityNodeInfo root = best.getRoot();
+            return root == null || root.getPackageName() == null ? "" : String.valueOf(root.getPackageName());
+        } catch (Exception ignored) {
+            return "";
+        }
     }
 
     private static boolean isNormalized(float value) {
@@ -475,6 +536,25 @@ public final class LofaAccessibilityService extends AccessibilityService {
         return out;
     }
 
+    private JSONObject launchViaTrampoline(String packageName) {
+        if (packageName == null || packageName.trim().isEmpty()) return error("launch_app requires package");
+        if (getPackageManager().getLaunchIntentForPackage(packageName.trim()) == null) {
+            return error("package is not installed: " + packageName);
+        }
+        Intent hop = new Intent(this, LaunchTrampolineActivity.class)
+                .putExtra(LaunchTrampolineActivity.EXTRA_PACKAGE, packageName.trim())
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        startActivity(hop);
+        JSONObject out = new JSONObject();
+        try {
+            out.put("launched", true);
+            out.put("package", packageName.trim());
+            out.put("via", "trampoline");
+        } catch (Exception ignored) {
+        }
+        return out;
+    }
+
     private JSONObject launchLabel(String label) {
         String wanted = label == null ? "" : label.trim();
         if (wanted.isEmpty()) return error("launch_label requires label");
@@ -499,7 +579,17 @@ public final class LofaAccessibilityService extends AccessibilityService {
         return error("launcher label is not available: " + wanted);
     }
 
-    private JSONObject screenshot() throws Exception {
+    private JSONObject screenshot(int maxDimension, int quality, boolean png) throws Exception {
+        JSONObject first = screenshotOnce(maxDimension, quality, png);
+        // ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT (3): the platform rate-limits captures.
+        if (first.has("error") && first.optString("error").endsWith(": 3")) {
+            SystemClock.sleep(1100);
+            return screenshotOnce(maxDimension, quality, png);
+        }
+        return first;
+    }
+
+    private JSONObject screenshotOnce(int limit, int quality, boolean png) throws Exception {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return error("screenshot requires Android 11 or newer");
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<JSONObject> value = new AtomicReference<>();
@@ -515,8 +605,8 @@ public final class LofaAccessibilityService extends AccessibilityService {
                     int originalWidth = bitmap.getWidth();
                     int originalHeight = bitmap.getHeight();
                     int maxDimension = Math.max(originalWidth, originalHeight);
-                    if (maxDimension > 1280) {
-                        float scale = 1280f / maxDimension;
+                    if (maxDimension > limit) {
+                        float scale = (float) limit / maxDimension;
                         Bitmap scaled = Bitmap.createScaledBitmap(
                                 bitmap,
                                 Math.round(originalWidth * scale),
@@ -529,10 +619,12 @@ public final class LofaAccessibilityService extends AccessibilityService {
                     int encodedWidth = bitmap.getWidth();
                     int encodedHeight = bitmap.getHeight();
                     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 75, bytes);
+                    bitmap.compress(png ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG, quality, bytes);
                     bitmap.recycle();
                     JSONObject out = new JSONObject();
-                    out.put("mime", "image/jpeg");
+                    out.put("mime", png ? "image/png" : "image/jpeg");
+                    out.put("rotation", DeviceState.rotation(LofaAccessibilityService.this));
+                    out.put("captured_at", System.currentTimeMillis());
                     out.put("width", originalWidth);
                     out.put("height", originalHeight);
                     out.put("encoded_width", encodedWidth);

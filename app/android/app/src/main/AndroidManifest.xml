@@ -37,6 +37,11 @@
             </intent-filter>
         </activity>
 
+        <!-- launch_app hop: a foreground lofa activity starts the target (iAware blocks background starts). -->
+        <activity android:name=".LaunchTrampolineActivity" android:exported="false"
+            android:excludeFromRecents="true" android:noHistory="true"
+            android:taskAffinity="cc.colorc.lofa.launchhop"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <activity android:name=".AttendanceSettingsActivity" android:exported="false"
             android:theme="@style/AppTheme.NoActionBar" />
         <activity android:name=".AttendanceWakeActivity" android:exported="false"

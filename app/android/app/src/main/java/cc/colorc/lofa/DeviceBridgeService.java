@@ -91,6 +91,7 @@ public final class DeviceBridgeService extends Service {
         } catch (Exception ignored) {
         }
         WirelessAdbKeeper.putStatus(context, out);
+        DeviceState.putStatus(context, out);
         return out;
     }
 
@@ -115,7 +116,12 @@ public final class DeviceBridgeService extends Service {
                 .put("launch_label")
                 .put("stage_media")
                 .put("review_remote_probe")
-                .put("cleanup_debug_media");
+                .put("cleanup_debug_media")
+                // Not ops: feature flags. Screen/keyguard/rotation/human-touch fields in status,
+                // and screenshot max_dim/quality/format + gesture abort_if_touched_after args.
+                .put("screen_state")
+                .put("human_touch")
+                .put("launch_trampoline");
     }
 
     private static String appVersionName(Context context) {
