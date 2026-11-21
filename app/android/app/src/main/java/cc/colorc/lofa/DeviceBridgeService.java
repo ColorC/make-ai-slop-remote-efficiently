@@ -102,6 +102,12 @@ public final class DeviceBridgeService extends Service {
             out.put("app_version_code", appVersionCode(context));
             out.put("device_runtime", DEVICE_RUNTIME);
             out.put("device_local_ip", localIpv4Address());
+            out.put("device_local_ips", localIpv4Addresses());
+            JSONObject tunnel = DevTunnelService.statusJson();
+            for (java.util.Iterator<String> it = tunnel.keys(); it.hasNext(); ) {
+                String key = it.next();
+                out.put(key, tunnel.get(key));
+            }
             // Which physical device this is (operators asked "what phone model is that?").
             out.put("device_manufacturer", Build.MANUFACTURER);
             out.put("device_model", Build.MODEL);
@@ -135,6 +141,7 @@ public final class DeviceBridgeService extends Service {
     private static JSONArray capabilities() {
         return new JSONArray()
                 .put("status")
+                .put("devtunnel")
                 .put("screenshot")
                 .put("ui_tree")
                 .put("tap")
@@ -173,7 +180,27 @@ public final class DeviceBridgeService extends Service {
         }
     }
 
+    /**
+     * The Wi-Fi (wlan*) IPv4 first: with a VPN such as CorpLink up, tun0 also carries an IPv4 and the
+     * host-side adb watchdog needs the LAN address, not the VPN one. Falls back to any non-VPN, then any.
+     */
     private static String localIpv4Address() {
+        JSONArray all = localIpv4Addresses();
+        String fallback = "";
+        for (int i = 0; i < all.length(); i++) {
+            JSONObject row = all.optJSONObject(i);
+            if (row == null) continue;
+            String name = row.optString("interface");
+            if (name.startsWith("wlan")) return row.optString("ip");
+            if (fallback.isEmpty() && !name.startsWith("tun") && !name.startsWith("ppp")) fallback = row.optString("ip");
+        }
+        if (fallback.isEmpty() && all.length() > 0) fallback = all.optJSONObject(0).optString("ip");
+        return fallback;
+    }
+
+    /** [{interface, ip}] for every up, non-loopback IPv4 address. */
+    private static JSONArray localIpv4Addresses() {
+        JSONArray out = new JSONArray();
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             while (interfaces != null && interfaces.hasMoreElements()) {
@@ -185,13 +212,53 @@ public final class DeviceBridgeService extends Service {
                     if (address instanceof Inet4Address
                             && !address.isLoopbackAddress()
                             && !address.isAnyLocalAddress()) {
-                        return address.getHostAddress();
+                        out.put(new JSONObject().put("interface", network.getName()).put("ip", address.getHostAddress()));
                     }
                 }
             }
         } catch (Exception ignored) {
         }
-        return "";
+        return out;
+    }
+
+    /**
+     * Reverse adb tunnel control over the automation channel, so a controller can start it without adb
+     * (the tablet away from home). args.action: start | stop | status (default status).
+     * start: relay defaults to the control plane that sent this command (same host/port/scheme,
+     * path /api/devtunnel/ws) and this control plane's device token; args.relay_url overrides
+     * (ws://host:port or wss://host:port). adbd is reached on the tablet's own loopback (5555 if
+     * adbd is in tcp mode, else the wireless-debugging TLS port found by a loopback probe).
+     */
+    private JSONObject devTunnel(String base, String token, JSONObject args) {
+        String action = args == null ? "status" : args.optString("action", "status");
+        try {
+            if ("stop".equals(action)) {
+                DevTunnelService.stop(this);
+            } else if ("start".equals(action)) {
+                String relay = args.optString("relay_url", "");
+                URI uri = URI.create(relay.isEmpty() ? base : relay);
+                String scheme = uri.getScheme() == null ? "ws" : uri.getScheme().toLowerCase();
+                boolean secure = scheme.equals("https") || scheme.equals("wss");
+                int port = uri.getPort() > 0 ? uri.getPort() : (secure ? 443 : 80);
+                String host = uri.getHost();
+                if (host == null || host.isEmpty()) return error("devtunnel: bad relay " + relay);
+                if (!relay.isEmpty() && !isAllowedRelayHost(host, secure)) {
+                    return error("devtunnel: plain ws only to private/loopback IPv4 relays");
+                }
+                DevTunnelService.start(this, host, port, secure ? "wss" : "ws", token);
+            } else if (!"status".equals(action)) {
+                return error("devtunnel: unknown action " + action);
+            }
+            Thread.sleep(300);
+            return DevTunnelService.statusJson();
+        } catch (Exception e) {
+            return error("devtunnel: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    private static boolean isAllowedRelayHost(String host, boolean secure) {
+        if (secure) return true;
+        return host.matches("^(127\\.\\d+\\.\\d+\\.\\d+|10\\.\\d+\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+|172\\.(1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+)$");
     }
 
     @Override
@@ -381,6 +448,9 @@ public final class DeviceBridgeService extends Service {
             ok = !result.has("error");
         } else if ("cleanup_debug_media".equals(command.optString("op"))) {
             result = cleanupDebugMedia(command.optJSONObject("args"));
+            ok = !result.has("error");
+        } else if ("devtunnel".equals(command.optString("op"))) {
+            result = devTunnel(base, token, command.optJSONObject("args"));
             ok = !result.has("error");
         } else {
             LofaAccessibilityService executor = LofaAccessibilityService.getInstance();

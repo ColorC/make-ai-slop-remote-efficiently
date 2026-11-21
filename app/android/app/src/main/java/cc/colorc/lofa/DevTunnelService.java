@@ -154,6 +154,7 @@ public final class DevTunnelService extends Service {
             out.put("devtunnel_relay", relayTarget);
             out.put("devtunnel_reconnects", reconnects);
             out.put("devtunnel_last_error", lastError);
+            out.put("devtunnel_adbd_port", adbdPort);
         } catch (Exception ignored) {
         }
         return out;
@@ -346,12 +347,14 @@ public final class DevTunnelService extends Service {
             closeAdbdLocked();
             final int gen = ++adbdGen;
             try {
+                int port = resolveAdbdPort();
+                if (port <= 0) throw new IOException("no adbd port on loopback (5555 closed, no wireless-debugging port)");
                 Socket socket = new Socket();
-                socket.connect(new InetSocketAddress(ADBD_HOST, ADBD_PORT), 4000);
+                socket.connect(new InetSocketAddress(ADBD_HOST, port), 4000);
                 socket.setTcpNoDelay(true);
                 adbdSocket = socket;
                 adbSocketOpen = true;
-                Log.i(TAG, "adbd socket opened -> " + ADBD_HOST + ":" + ADBD_PORT);
+                Log.i(TAG, "adbd socket opened -> " + ADBD_HOST + ":" + port);
                 Thread pump = new Thread(() -> pumpAdbdToWs(ws, socket, gen), "lofa-devtunnel-adbd");
                 pump.setDaemon(true);
                 pump.start();
@@ -362,6 +365,70 @@ public final class DevTunnelService extends Service {
                 // 连不上本机 adbd → 通知中继关闭对端 adb 连接。
                 sendText(ws, "{\"op\":\"close\"}");
             }
+        }
+    }
+
+    // adb 线协议常量（system/core/adb/adb.h）：小端 6 个 uint32 头。
+    private static final int A_CNXN = 0x4e584e43;
+    private static final int A_AUTH = 0x48545541;
+    private static final int A_STLS = 0x534c5453;
+    private static volatile int adbdPort;   // 上次确认过的 adbd 端口（0 = 未知）
+
+    /**
+     * 本机 adbd 端口：5555（adbd 在 tcp 模式，平板重启前一直有效）优先；不通就在回环上扫
+     * 30000–65535 找「无线调试」TLS 端口（随机，应用读不到 adb_tls_port 设置）。回环上关着的
+     * 端口立即拒绝，整段约几秒；结果缓存，连不上时再重扫。判定：发一个 CNXN，回 STLS/AUTH/CNXN 就是 adbd。
+     */
+    private static int resolveAdbdPort() {
+        int cached = adbdPort;
+        if (cached > 0 && isAdbd(cached, 600)) return cached;
+        if (isAdbd(ADBD_PORT, 800)) return adbdPort = ADBD_PORT;
+        for (int p = 30000; p <= 65535; p++) {
+            if (canConnect(p) && isAdbd(p, 800)) {
+                Log.i(TAG, "wireless debugging port on loopback: " + p);
+                return adbdPort = p;
+            }
+        }
+        adbdPort = 0;
+        return 0;
+    }
+
+    private static boolean canConnect(int port) {
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(ADBD_HOST, port), 50);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private static boolean isAdbd(int port, int timeoutMs) {
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(ADBD_HOST, port), timeoutMs);
+            s.setSoTimeout(timeoutMs);
+            byte[] payload = "host::\0".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            int sum = 0;
+            for (byte b : payload) sum += b & 0xff;
+            java.nio.ByteBuffer h = java.nio.ByteBuffer.allocate(24 + payload.length).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            h.putInt(A_CNXN).putInt(0x01000001).putInt(256 * 1024).putInt(payload.length).putInt(sum).putInt(~A_CNXN);
+            h.put(payload);
+            OutputStream out = s.getOutputStream();
+            out.write(h.array());
+            out.flush();
+            byte[] head = new byte[24];
+            InputStream in = s.getInputStream();
+            int n = 0;
+            while (n < 24) {
+                int r = in.read(head, n, 24 - n);
+                if (r < 0) return false;
+                n += r;
+            }
+            java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(head).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            int cmd = b.getInt(0);
+            int magic = b.getInt(20);
+            return (cmd == A_STLS || cmd == A_AUTH || cmd == A_CNXN) && magic == ~cmd;
+        } catch (IOException e) {
+            return false;
         }
     }
 
