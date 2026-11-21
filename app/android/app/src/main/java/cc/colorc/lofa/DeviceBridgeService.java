@@ -80,6 +80,10 @@ public final class DeviceBridgeService extends Service {
         }
     }
 
+    static boolean isRunning() {
+        return running;
+    }
+
     static void startIfConfigured(Context context) {
         if (!DeviceBridgeConfig.isConfigured(context)) return;
         try {
@@ -129,6 +133,7 @@ public final class DeviceBridgeService extends Service {
         }
         WirelessAdbKeeper.putStatus(context, out);
         DeviceState.putStatus(context, out);
+        BridgeKeepAlive.putStatus(context, out);
         return out;
     }
 
@@ -269,6 +274,7 @@ public final class DeviceBridgeService extends Service {
         running = true;
         stopping = false;
         WirelessAdbKeeper.onComponentStart(this, "bridge_start");
+        BridgeKeepAlive.hold(this);   // screen-off / Doze: keep the CPU and Wi-Fi up for the long poll (1.0.67)
         worker.execute(this::runLoop);
         worker.execute(this::superviseExtras);
     }
@@ -285,10 +291,18 @@ public final class DeviceBridgeService extends Service {
     }
 
     @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        BridgeKeepAlive.armWatchdog(this);
+        super.onTaskRemoved(rootIntent);
+    }
+
+    @Override
     public void onDestroy() {
         stopping = true;
         running = false;
         worker.shutdownNow();
+        BridgeKeepAlive.release();
+        BridgeKeepAlive.armWatchdog(this);   // killed or stopped: the watchdog alarm brings the bridge back
         super.onDestroy();
     }
 
@@ -304,6 +318,7 @@ public final class DeviceBridgeService extends Service {
                 continue;
             }
             try {
+                BridgeKeepAlive.refresh(this);
                 if (!paired) pairAndRegister(base, deviceId, token);
                 String encoded = URLEncoder.encode(deviceId, StandardCharsets.UTF_8.name());
                 JSONObject payload = request(

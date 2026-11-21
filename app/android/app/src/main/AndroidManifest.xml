@@ -66,6 +66,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Restarts the device bridge after boot / update / being killed (alarm from BridgeKeepAlive). -->
+        <receiver android:name=".BridgeWatchdogReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Keeps wireless debugging on across reboots / Wi-Fi changes (see WirelessAdbKeeper). -->
         <receiver android:name=".WirelessAdbReceiver" android:exported="false"
             android:directBootAware="true">
@@ -132,6 +141,7 @@
          Lint's SDK protection-level check omits the user-granted app-op path. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Development permission, granted once over adb (pm grant), never by the user UI:
          lets WirelessAdbKeeper switch wireless debugging back on after reboot / Wi-Fi change. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
