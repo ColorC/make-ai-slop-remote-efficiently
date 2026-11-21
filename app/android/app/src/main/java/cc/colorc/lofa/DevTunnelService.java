@@ -240,8 +240,8 @@ public final class DevTunnelService extends Service {
             relayTarget = host + ":" + port;
             // OkHttp 的 HttpUrl 只认 http/https；WS 升级走 http(s) URL。
             String httpScheme = "wss".equalsIgnoreCase(scheme) ? "https" : "http";
-            this.relayUrl = httpScheme + "://" + host + ":" + port + WS_PATH
-                    + "?token=" + Uri.encode(tok == null ? "" : tok);
+            // 令牌走请求头不进 URL：网关访问日志会整条记下 URI（11-21 在 12443 日志里看到过 ?token=）。
+            this.relayUrl = httpScheme + "://" + host + ":" + port + WS_PATH;
             saveConfig(this, host, port, scheme, tok);   // 记住配置, 下次 app 启动自动连回
         } else {
             this.relayUrl = null;
@@ -258,7 +258,7 @@ public final class DevTunnelService extends Service {
             }
             final CountDownLatch done = new CountDownLatch(1);
             WebSocket ws = client.newWebSocket(
-                    new Request.Builder().url(relayUrl).build(),
+                    new Request.Builder().url(relayUrl).header("X-LOFA-Device-Token", token).build(),
                     new RelayListener(done)
             );
             this.webSocket = ws;
